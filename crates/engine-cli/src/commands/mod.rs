@@ -1,5 +1,6 @@
 pub mod inspect;
 pub mod replay;
+pub mod run;
 pub mod test;
 
 #[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]

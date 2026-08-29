@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/engine-core",
+    "crates/engine-scene",
     "crates/engine-cli",
 ]
 
@@ -14,6 +15,7 @@ hecs = "0.10"
 glam = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 rand = "0.8"
 rand_chacha = "0.3"
 clap = { version = "4", features = ["derive"] }

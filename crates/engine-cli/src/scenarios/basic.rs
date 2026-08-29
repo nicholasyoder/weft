@@ -42,7 +42,7 @@ pub fn build(seed: u64) -> Sim {
     sim
 }
 
-fn movement_system(args: &mut SystemArgs) {
+pub(crate) fn movement_system(args: &mut SystemArgs) {
     for (_e, (pos, vel)) in args.world.query::<(&mut Position, &Velocity)>().iter() {
         pos.x += vel.x * args.dt;
         pos.y += vel.y * args.dt;
@@ -50,12 +50,12 @@ fn movement_system(args: &mut SystemArgs) {
     }
 }
 
-fn dump_position(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+pub(crate) fn dump_position(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
     e.get::<&Position>()
         .map(|p| ("Position", serde_json::to_value(&*p).unwrap()))
 }
 
-fn dump_velocity(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+pub(crate) fn dump_velocity(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
     e.get::<&Velocity>()
         .map(|v| ("Velocity", serde_json::to_value(&*v).unwrap()))
 }

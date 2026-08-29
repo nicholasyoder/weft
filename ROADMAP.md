@@ -61,7 +61,7 @@ Naming, crate boundaries, and even the `crates/` vs. flat-workspace layout are a
 
 ---
 
-## Phase 1 — Text scene format
+## Phase 1 — Text scene format — **done** (2026-08-28)
 
 **Goal**: move from hardcoded test scenarios to the text DSL described in [research/03, §1](research/03-design-principles-for-agent-native-engines.md#1-scene-and-asset-data-formats-text-diffable-git-mergeable).
 
@@ -71,6 +71,8 @@ Naming, crate boundaries, and even the `crates/` vs. flat-workspace layout are a
 - Extend `engine inspect` to work against a loaded scene file, not just the Phase 0 hardcoded scenario.
 
 **Definition of done**: a hand-written scene text file with a handful of entities loads, runs deterministically, and its state is inspectable/diffable exactly like Phase 0's hardcoded scenario. A round-trip test: edit one entity's starting values in the text file, confirm only the expected part of the JSON output changes.
+
+**Implementation notes**: built as `crates/engine-scene` — a `SceneDef`/TOML parser plus a caller-supplied `ComponentRegistry`/`SystemRegistry` so the generic loader has no compile-time knowledge of `Position`/`Velocity`-style game components (mirrors the `ComponentDumper` fn-pointer pattern from Phase 0, in reverse). `engine-cli::registry` wires the existing `basic` scenario's component/system types into that registry rather than duplicating them; no `games/sandbox` crate yet (still deliberately deferred). Every scene-loaded entity gets an automatic `SceneName` component so `engine inspect` output is diffable by the name an author chose, not by hecs's internal entity id. `test`/`inspect`/`replay` were generalized around a `SimSource` enum (`Scenario(String) | Scene(PathBuf)`) so scene-file support reached every existing command, not just the new `run` subcommand; `Recording` files can now point at a `scene` path instead of a `scenario` name. See [ADR-0003](docs/decisions/0003-text-scene-format.md). `cargo test --workspace` (28 tests) is green, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` both pass.
 
 ---
 

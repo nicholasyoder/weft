@@ -1,31 +1,30 @@
 use std::process::ExitCode;
 
 use crate::commands::OutputFormat;
-use crate::{verify_scenario_determinism, DeterminismResult};
+use crate::{verify_scenario_determinism, DeterminismResult, SimSource};
 
-pub fn run(scenario: &str, seed: u64, ticks: u64, format: OutputFormat) -> ExitCode {
+pub fn run(source: SimSource, seed: u64, ticks: u64, format: OutputFormat) -> ExitCode {
     if ticks == 0 {
         crate::diagnostics::CliError::invalid_ticks(ticks).print(format.is_json());
         return ExitCode::FAILURE;
     }
 
-    match verify_scenario_determinism(scenario, seed, ticks) {
+    let label = source.label();
+    match verify_scenario_determinism(source, seed, ticks) {
         Ok(json) => {
             if format.is_json() {
                 println!(
                     "{}",
                     serde_json::json!({
                         "status": "pass",
-                        "scenario": scenario,
+                        "source": label,
                         "seed": seed,
                         "ticks": ticks,
                         "world": json,
                     })
                 );
             } else {
-                println!(
-                    "PASS: scenario '{scenario}' is deterministic over {ticks} ticks at seed {seed}"
-                );
+                println!("PASS: '{label}' is deterministic over {ticks} ticks at seed {seed}");
             }
             ExitCode::SUCCESS
         }
@@ -39,7 +38,7 @@ pub fn run(scenario: &str, seed: u64, ticks: u64, format: OutputFormat) -> ExitC
                     "{}",
                     serde_json::json!({
                         "status": "fail",
-                        "scenario": fail.scenario,
+                        "source": fail.source,
                         "reason": "nondeterministic",
                         "run_a": fail.json_a,
                         "run_b": fail.json_b,
@@ -47,8 +46,8 @@ pub fn run(scenario: &str, seed: u64, ticks: u64, format: OutputFormat) -> ExitC
                 );
             } else {
                 println!(
-                    "FAIL: scenario '{}' is NOT deterministic — two runs with the same seed produced different world state",
-                    fail.scenario
+                    "FAIL: '{}' is NOT deterministic — two runs with the same seed produced different world state",
+                    fail.source
                 );
             }
             ExitCode::FAILURE

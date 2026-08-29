@@ -17,15 +17,13 @@ pub fn run(path: &std::path::Path, format: OutputFormat) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    let source = recording.source();
     let result = match recording.dump_every {
-        Some(every) if every > 0 => crate::run_and_dump_snapshots(
-            &recording.scenario,
-            recording.seed,
-            recording.ticks,
-            every,
-        )
-        .map(|snapshots| serde_json::json!({ "snapshots": snapshots })),
-        _ => crate::run_and_dump(&recording.scenario, recording.seed, recording.ticks)
+        Some(every) if every > 0 => {
+            crate::run_and_dump_snapshots(source, recording.seed, recording.ticks, every)
+                .map(|snapshots| serde_json::json!({ "snapshots": snapshots }))
+        }
+        _ => crate::run_and_dump(source, recording.seed, recording.ticks)
             .map(|world| serde_json::json!({ "world": world })),
     };
 

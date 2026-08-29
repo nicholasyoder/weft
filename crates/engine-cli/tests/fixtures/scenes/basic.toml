@@ -1,0 +1,39 @@
+[meta]
+dt = 0.016666667
+
+[[entity]]
+name = "mover-0"
+
+[entity.components.Position]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[entity.components.Velocity]
+x = 0.5
+y = -0.2
+z = 0.0
+
+[[entity]]
+name = "mover-1"
+
+[entity.components.Position]
+x = 1.0
+y = 0.0
+z = 0.0
+
+[entity.components.Velocity]
+x = -0.3
+y = 0.1
+z = 0.0
+
+[[entity]]
+name = "static-marker"
+
+[entity.components.Position]
+x = 5.0
+y = 5.0
+z = 0.0
+
+[[system]]
+name = "movement"

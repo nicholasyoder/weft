@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use engine_cli::commands::{self, OutputFormat};
+use engine_cli::SimSource;
 
 #[derive(Parser)]
 #[command(name = "engine", about = "Weft engine CLI")]
@@ -13,10 +14,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run a scenario twice and verify it produces byte-identical world state.
+    /// Run a scenario or scene twice and verify it produces byte-identical world state.
     Test {
-        #[arg(long, default_value = "basic")]
-        scenario: String,
+        #[arg(long, conflicts_with = "scene")]
+        scenario: Option<String>,
+        #[arg(long, conflicts_with = "scenario")]
+        scene: Option<PathBuf>,
         #[arg(long, default_value_t = 1)]
         seed: u64,
         #[arg(long, default_value_t = 60)]
@@ -24,7 +27,17 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
-    /// Dump a scenario's final world state as JSON.
+    /// Load a scene file, run it for N ticks, and exit.
+    Run {
+        scene: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value_t = 60)]
+        ticks: u64,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Dump a scenario's or scene's final world state as JSON.
     Inspect {
         #[command(flatten)]
         source: InspectSource,
@@ -42,14 +55,16 @@ enum Command {
 #[derive(Args)]
 #[group(required = false, multiple = true)]
 struct InspectSource {
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["recording", "scene"])]
     scenario: Option<String>,
     #[arg(long, default_value_t = 1)]
     seed: u64,
     #[arg(long, default_value_t = 60)]
     ticks: u64,
-    #[arg(long, conflicts_with_all = ["scenario"])]
+    #[arg(long, conflicts_with_all = ["scenario", "scene"])]
     recording: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["scenario", "recording"])]
+    scene: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -57,18 +72,40 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Test {
             scenario,
+            scene,
             seed,
             ticks,
             format,
-        } => commands::test::run(&scenario, seed, ticks, format),
+        } => {
+            let source = match scene {
+                Some(path) => SimSource::Scene(path),
+                None => SimSource::Scenario(scenario.unwrap_or_else(|| "basic".to_string())),
+            };
+            commands::test::run(source, seed, ticks, format)
+        }
+        Command::Run {
+            scene,
+            seed,
+            ticks,
+            format,
+        } => commands::run::run(&scene, seed, ticks, format),
         Command::Inspect { source, format } => {
-            let src = match source.recording {
-                Some(path) => commands::inspect::Source::Recording { path },
-                None => commands::inspect::Source::Inline {
-                    scenario: source.scenario.unwrap_or_else(|| "basic".to_string()),
+            let src = if let Some(path) = source.recording {
+                commands::inspect::Source::Recording { path }
+            } else if let Some(path) = source.scene {
+                commands::inspect::Source::Inline {
+                    source: SimSource::Scene(path),
                     seed: source.seed,
                     ticks: source.ticks,
-                },
+                }
+            } else {
+                commands::inspect::Source::Inline {
+                    source: SimSource::Scenario(
+                        source.scenario.unwrap_or_else(|| "basic".to_string()),
+                    ),
+                    seed: source.seed,
+                    ticks: source.ticks,
+                }
             };
             commands::inspect::run(src, format)
         }

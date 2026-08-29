@@ -11,7 +11,7 @@ pub type System = fn(&mut SystemArgs);
 
 #[derive(Default)]
 pub struct Scheduler {
-    systems: Vec<(&'static str, System)>,
+    systems: Vec<(String, System)>,
 }
 
 impl Scheduler {
@@ -19,8 +19,8 @@ impl Scheduler {
         Self::default()
     }
 
-    pub fn add_system(&mut self, name: &'static str, f: System) -> &mut Self {
-        self.systems.push((name, f));
+    pub fn add_system(&mut self, name: impl Into<String>, f: System) -> &mut Self {
+        self.systems.push((name.into(), f));
         self
     }
 

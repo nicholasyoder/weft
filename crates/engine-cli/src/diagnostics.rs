@@ -58,6 +58,19 @@ impl CliError {
         .with_context(serde_json::json!({ "path": path }))
     }
 
+    pub fn recording_invalid_source(path: &str) -> Self {
+        Self::new(
+            "RECORDING_INVALID_SOURCE",
+            format!("recording file '{path}' must specify exactly one of 'scenario' or 'scene'"),
+        )
+        .with_context(serde_json::json!({ "path": path }))
+    }
+
+    pub fn from_scene_error(path: &std::path::Path, source: &engine_scene::SceneError) -> Self {
+        Self::new(source.code(), source.to_string())
+            .with_context(serde_json::json!({ "path": path.display().to_string() }))
+    }
+
     pub fn print(&self, json: bool) {
         if json {
             eprintln!("{}", serde_json::json!({ "error": self }));
