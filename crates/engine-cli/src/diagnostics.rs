@@ -71,6 +71,10 @@ impl CliError {
             .with_context(serde_json::json!({ "path": path.display().to_string() }))
     }
 
+    pub fn from_render_error(source: &engine_render::RenderError) -> Self {
+        Self::new(source.code(), source.to_string())
+    }
+
     pub fn print(&self, json: bool) {
         if json {
             eprintln!("{}", serde_json::json!({ "error": self }));

@@ -56,6 +56,13 @@ impl SimSource {
     }
 }
 
+/// Builds `source` into a live `Sim` without dumping it to JSON — what
+/// `render` needs (direct `World` access), unlike every other command,
+/// which only ever wants the JSON dump `run_and_dump` produces.
+pub fn build_sim(source: impl Into<SimSource>, seed: u64) -> Result<Sim, CliError> {
+    source.into().build(seed).map(|(sim, _)| sim)
+}
+
 /// Builds `source`, runs it for `ticks` ticks, and returns the final
 /// world-state JSON dump. The one place scenario/scene build + run + inspect
 /// are joined, so every caller (CLI commands and tests alike) shares this

@@ -76,7 +76,7 @@ Naming, crate boundaries, and even the `crates/` vs. flat-workspace layout are a
 
 ---
 
-## Phase 2 — Headless-first 3D rendering
+## Phase 2 — Headless-first 3D rendering — **done** (2026-08-28)
 
 **Goal**: get pixels on screen (or into a buffer) without ever requiring a window.
 
@@ -87,7 +87,9 @@ Naming, crate boundaries, and even the `crates/` vs. flat-workspace layout are a
 
 **Definition of done**: `engine render` produces a correct, deterministic PNG for a simple scene with no window/display server present (verify this explicitly, e.g. in a container with no `DISPLAY` set); a golden-image regression test passes.
 
-**Re-evaluation checkpoint**: this is a good point to revisit whether `wgpu`'s abstraction level is right, or whether the project wants to go closer to the native graphics APIs for more control — see [Practice: keep re-evaluating](#practice-keep-re-evaluating).
+**Implementation notes**: built as `crates/engine-render` — a `wgpu` pipeline restricted to `Backends::VULKAN` so it runs against Mesa's `lavapipe` software rasterizer with no GPU or display server (this environment needed `mesa-vulkan-drivers` installed; see [ADR-0004](docs/decisions/0004-headless-rendering-backend.md)). `engine-core` gained its first first-class component, `Transform` (`glam::Vec3`/`Quat`, engine-core's first real use of `glam`); `engine-render` adds its own `Camera` (look-at target, not a rotation quaternion — easier to hand-author), `MeshRef` (hardcoded `Cube`/`Plane`), and `Material` (flat color) components, registered into `engine-cli`'s existing `ComponentRegistry` alongside Phase 1's `Position`/`Velocity`. Shading is simple-lit (one hardcoded directional light, Lambertian + ambient) per-face on the cube, not unlit, to prove the normal pipeline ahead of Phase 3's real assets. The golden-image test (`crates/engine-cli/tests/render.rs`) compares against a checked-in reference PNG with a fixed per-channel tolerance, not byte equality — cross-machine Mesa version drift is an accepted non-goal, the same shape of caveat ADR-0002 and the roadmap's own Phase 6 note already accept for `rapier3d`. `cargo test --workspace` (36 tests) is green, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` both pass.
+
+**Re-evaluation checkpoint, done**: `wgpu`'s abstraction level held up fine for a minimal offscreen pipeline — the friction was entirely API churn between tutorial-era `wgpu` and the current `30.x` release (renamed types like `TexelCopyBufferInfo`, `PollType`, `immediate_size`), not the abstraction itself being wrong. No reason found to go closer to native graphics APIs; revisit only if a concrete need (e.g. multi-threaded command recording, bindless resources) actually hits `wgpu`'s ceiling.
 
 ---
 

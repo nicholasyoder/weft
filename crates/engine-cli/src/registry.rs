@@ -1,9 +1,11 @@
 //! The one `ComponentRegistry`/`SystemRegistry` engine-cli knows about,
 //! wiring scene-file component/system names to the same Rust types the
-//! hardcoded `basic` scenario already uses. There is no separate game crate
-//! yet, so this is the single place scene files and hardcoded scenarios
-//! share component definitions.
+//! hardcoded `basic` scenario and the renderer already use. There is no
+//! separate game crate yet, so this is the single place scene files,
+//! hardcoded scenarios, and rendering share component definitions.
 
+use engine_core::Transform;
+use engine_render::{Camera, Material, MeshRef};
 use engine_scene::{ComponentRegistry, SystemRegistry};
 
 use crate::scenarios::basic::{dump_position, dump_velocity, movement_system, Position, Velocity};
@@ -24,10 +26,63 @@ fn load_velocity(
     Ok(())
 }
 
+fn load_transform(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<Transform>(v)?);
+    Ok(())
+}
+
+fn dump_transform(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&Transform>()
+        .map(|t| ("Transform", serde_json::to_value(*t).unwrap()))
+}
+
+fn load_camera(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<Camera>(v)?);
+    Ok(())
+}
+
+fn dump_camera(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&Camera>()
+        .map(|c| ("Camera", serde_json::to_value(*c).unwrap()))
+}
+
+fn load_mesh_ref(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<MeshRef>(v)?);
+    Ok(())
+}
+
+fn dump_mesh_ref(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&MeshRef>()
+        .map(|m| ("MeshRef", serde_json::to_value(*m).unwrap()))
+}
+
+fn load_material(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<Material>(v)?);
+    Ok(())
+}
+
+fn dump_material(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&Material>()
+        .map(|m| ("Material", serde_json::to_value(*m).unwrap()))
+}
+
 pub fn components() -> ComponentRegistry {
     let mut registry = ComponentRegistry::new();
     registry.register("Position", load_position, dump_position);
     registry.register("Velocity", load_velocity, dump_velocity);
+    registry.register("Transform", load_transform, dump_transform);
+    registry.register("Camera", load_camera, dump_camera);
+    registry.register("MeshRef", load_mesh_ref, dump_mesh_ref);
+    registry.register("Material", load_material, dump_material);
     registry
 }
 

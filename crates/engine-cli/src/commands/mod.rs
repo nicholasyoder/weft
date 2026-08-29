@@ -1,4 +1,5 @@
 pub mod inspect;
+pub mod render;
 pub mod replay;
 pub mod run;
 pub mod test;

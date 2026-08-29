@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 engine-core = { path = "../engine-core" }
 engine-scene = { path = "../engine-scene" }
+engine-render = { path = "../engine-render" }
 hecs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -24,3 +25,4 @@ thiserror.workspace = true
 [dev-dependencies]
 assert_cmd.workspace = true
 predicates.workspace = true
+image.workspace = true

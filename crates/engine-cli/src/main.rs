@@ -37,6 +37,23 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
+    /// Load a scene file, run it for N ticks, and render the final world
+    /// state to a PNG. No window or display server required.
+    Render {
+        scene: PathBuf,
+        #[arg(long)]
+        to: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value_t = 60)]
+        ticks: u64,
+        #[arg(long, default_value_t = 256)]
+        width: u32,
+        #[arg(long, default_value_t = 256)]
+        height: u32,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
     /// Dump a scenario's or scene's final world state as JSON.
     Inspect {
         #[command(flatten)]
@@ -89,6 +106,15 @@ fn main() -> ExitCode {
             ticks,
             format,
         } => commands::run::run(&scene, seed, ticks, format),
+        Command::Render {
+            scene,
+            to,
+            seed,
+            ticks,
+            width,
+            height,
+            format,
+        } => commands::render::run(&scene, &to, seed, ticks, width, height, format),
         Command::Inspect { source, format } => {
             let src = if let Some(path) = source.recording {
                 commands::inspect::Source::Recording { path }
