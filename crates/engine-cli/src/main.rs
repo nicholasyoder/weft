@@ -43,6 +43,8 @@ enum Command {
         scene: PathBuf,
         #[arg(long)]
         to: PathBuf,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
         seed: u64,
         #[arg(long, default_value_t = 60)]
@@ -51,6 +53,17 @@ enum Command {
         width: u32,
         #[arg(long, default_value_t = 256)]
         height: u32,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Convert a glTF file or a loose image file into the content-addressed
+    /// asset store, emitting a scene-text-file fragment ready to paste in.
+    Import {
+        input: PathBuf,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -109,12 +122,19 @@ fn main() -> ExitCode {
         Command::Render {
             scene,
             to,
+            assets_dir,
             seed,
             ticks,
             width,
             height,
             format,
-        } => commands::render::run(&scene, &to, seed, ticks, width, height, format),
+        } => commands::render::run(&scene, &to, &assets_dir, seed, ticks, width, height, format),
+        Command::Import {
+            input,
+            assets_dir,
+            out,
+            format,
+        } => commands::import::run(&input, &assets_dir, out.as_deref(), format),
         Command::Inspect { source, format } => {
             let src = if let Some(path) = source.recording {
                 commands::inspect::Source::Recording { path }

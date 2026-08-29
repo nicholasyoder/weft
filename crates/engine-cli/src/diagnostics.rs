@@ -75,6 +75,32 @@ impl CliError {
         Self::new(source.code(), source.to_string())
     }
 
+    pub fn from_asset_error(source: &engine_assets::AssetError) -> Self {
+        Self::new(source.code(), source.to_string())
+    }
+
+    pub fn unsupported_import_extension(path: &std::path::Path, extension: &str) -> Self {
+        Self::new(
+            "IMPORT_UNSUPPORTED_EXTENSION",
+            format!(
+                "don't know how to import '{}': unsupported extension '{extension}' (expected .gltf/.glb or a common image format)",
+                path.display()
+            ),
+        )
+        .with_context(serde_json::json!({ "path": path.display().to_string(), "extension": extension }))
+    }
+
+    pub fn import_write_failed(path: &std::path::Path, source: &std::io::Error) -> Self {
+        Self::new(
+            "IMPORT_WRITE_ERROR",
+            format!(
+                "failed to write import fragment to '{}': {source}",
+                path.display()
+            ),
+        )
+        .with_context(serde_json::json!({ "path": path.display().to_string() }))
+    }
+
     pub fn print(&self, json: bool) {
         if json {
             eprintln!("{}", serde_json::json!({ "error": self }));

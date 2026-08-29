@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::Path;
+
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
@@ -25,12 +28,14 @@ struct Drawable {
     transform: Transform,
     mesh: MeshKind,
     color: [f32; 3],
+    texture: Option<String>,
 }
 
 pub fn render_scene(
     world: &hecs::World,
     width: u32,
     height: u32,
+    assets_dir: &Path,
 ) -> Result<image::RgbaImage, RenderError> {
     let mut cameras: Vec<_> = world
         .query::<(&Transform, &Camera)>()
@@ -52,8 +57,9 @@ pub fn render_scene(
                 e,
                 Drawable {
                     transform: *t,
-                    mesh: m.mesh,
+                    mesh: m.mesh.clone(),
                     color: mat.color,
+                    texture: mat.texture.clone(),
                 },
             )
         })
@@ -75,6 +81,7 @@ pub fn render_scene(
         view_proj,
         width,
         height,
+        assets_dir,
     ))
 }
 
@@ -83,7 +90,10 @@ async fn render(
     view_proj: Mat4,
     width: u32,
     height: u32,
+    assets_dir: &Path,
 ) -> Result<image::RgbaImage, RenderError> {
+    let asset_store = engine_assets::AssetStore::new(assets_dir);
+
     let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
     instance_desc.backends = wgpu::Backends::VULKAN;
     let instance = wgpu::Instance::new(instance_desc);
@@ -125,9 +135,32 @@ async fn render(
         }],
     });
 
+    let texture_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("weft-texture-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("weft-pipeline-layout"),
-        bind_group_layouts: &[Some(&bind_group_layout)],
+        bind_group_layouts: &[Some(&bind_group_layout), Some(&texture_bind_group_layout)],
         immediate_size: 0,
     });
 
@@ -144,6 +177,11 @@ async fn render(
                 offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                 shader_location: 1,
                 format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x2,
             },
         ],
     };
@@ -189,6 +227,24 @@ async fn render(
     let plane_mesh = mesh::plane();
     let cube_buffers = upload_mesh(&device, &cube_mesh);
     let plane_buffers = upload_mesh(&device, &plane_mesh);
+    let mut mesh_cache: HashMap<String, (wgpu::Buffer, wgpu::Buffer, u32)> = HashMap::new();
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("weft-sampler"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        address_mode_w: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    // Untextured drawables sample a shared 1x1 white texture rather than
+    // branching in the shader — white * color reproduces the flat-color
+    // look exactly, so one shader code path covers both cases.
+    let white_bind_group =
+        create_white_texture_bind_group(&device, &queue, &texture_bind_group_layout, &sampler);
+    let mut texture_cache: HashMap<String, wgpu::BindGroup> = HashMap::new();
 
     let color_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("weft-color-target"),
@@ -227,7 +283,7 @@ async fn render(
     });
 
     // One uniform buffer + bind group per draw call: entity counts here are
-    // tiny (Phase 2 hardcoded-mesh scenes), so per-draw allocation is far
+    // tiny (hardcoded/imported test scenes), so per-draw allocation is far
     // simpler than dynamic-offset bookkeeping and easy to revisit if
     // profiling ever says otherwise.
     let mut per_draw_state = Vec::with_capacity(drawables.len());
@@ -285,14 +341,43 @@ async fn render(
                 }],
             });
             per_draw_state.push((uniform_buffer, bind_group));
-            let (vertex_buffer, index_buffer, index_count) = match drawable.mesh {
+
+            let (vertex_buffer, index_buffer, index_count) = match &drawable.mesh {
                 MeshKind::Cube => (&cube_buffers.0, &cube_buffers.1, cube_buffers.2),
                 MeshKind::Plane => (&plane_buffers.0, &plane_buffers.1, plane_buffers.2),
+                MeshKind::Asset(hash) => {
+                    if !mesh_cache.contains_key(hash) {
+                        let buffers = load_mesh_buffers(hash, &device, &asset_store)?;
+                        mesh_cache.insert(hash.clone(), buffers);
+                    }
+                    let (vb, ib, count) = mesh_cache.get(hash).unwrap();
+                    (vb, ib, *count)
+                }
             };
+
+            let texture_bind_group = match &drawable.texture {
+                Some(hash) => {
+                    if !texture_cache.contains_key(hash) {
+                        let bind_group = load_texture_bind_group(
+                            hash,
+                            &device,
+                            &queue,
+                            &asset_store,
+                            &texture_bind_group_layout,
+                            &sampler,
+                        )?;
+                        texture_cache.insert(hash.clone(), bind_group);
+                    }
+                    texture_cache.get(hash).unwrap()
+                }
+                None => &white_bind_group,
+            };
+
             let (_, bind_group) = per_draw_state.last().unwrap();
             pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(1, texture_bind_group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..index_count, 0, 0..1);
         }
     }
@@ -313,6 +398,115 @@ fn upload_mesh(device: &wgpu::Device, data: &mesh::MeshData) -> (wgpu::Buffer, w
         usage: wgpu::BufferUsages::INDEX,
     });
     (vertex_buffer, index_buffer, data.indices.len() as u32)
+}
+
+fn load_mesh_buffers(
+    hash: &str,
+    device: &wgpu::Device,
+    store: &engine_assets::AssetStore,
+) -> Result<(wgpu::Buffer, wgpu::Buffer, u32), RenderError> {
+    let bytes = store.get(hash)?;
+    let mesh_data = engine_assets::mesh::decode(&bytes)?;
+    let render_mesh = mesh::from_asset(&mesh_data);
+    Ok(upload_mesh(device, &render_mesh))
+}
+
+fn upload_rgba_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    rgba: &image::RgbaImage,
+) -> wgpu::TextureView {
+    let (width, height) = rgba.dimensions();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("weft-texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+fn create_white_texture_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    let white = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+    let view = upload_rgba_texture(device, queue, &white);
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("weft-white-texture-bind-group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+fn load_texture_bind_group(
+    hash: &str,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    store: &engine_assets::AssetStore,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+) -> Result<wgpu::BindGroup, RenderError> {
+    let bytes = store.get(hash)?;
+    let decoded = image::load_from_memory(&bytes).map_err(|source| {
+        RenderError::AssetLoadFailed(engine_assets::AssetError::ImageDecodeFailed {
+            path: hash.to_string(),
+            source,
+        })
+    })?;
+    let view = upload_rgba_texture(device, queue, &decoded.to_rgba8());
+    Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("weft-imported-texture-bind-group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    }))
 }
 
 fn read_back(

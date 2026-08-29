@@ -5,6 +5,9 @@ use assert_cmd::Command;
 
 const RENDER_SCENE: &str = "tests/fixtures/scenes/render_basic.toml";
 const GOLDEN: &str = "tests/fixtures/scenes/render_basic.golden.png";
+const RENDER_IMPORTED_SCENE: &str = "tests/fixtures/scenes/render_imported.toml";
+const IMPORTED_GOLDEN: &str = "tests/fixtures/scenes/render_imported.golden.png";
+const IMPORTED_ASSETS_DIR: &str = "tests/fixtures/assets";
 
 /// Per-channel tolerance for the golden-image comparison. Not blind byte
 /// equality: `lavapipe`/Mesa version drift across machines can shift
@@ -83,6 +86,54 @@ fn cli_render_subcommand_works_with_no_display_server() {
 
     let image = image::open(&out).unwrap();
     assert_eq!((image.width(), image.height()), (32, 32));
+}
+
+#[test]
+fn render_of_imported_gltf_asset_matches_golden_image_within_tolerance() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            RENDER_IMPORTED_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--assets-dir",
+            IMPORTED_ASSETS_DIR,
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(IMPORTED_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
+#[test]
+fn rendering_a_scene_with_an_unknown_asset_hash_is_a_structured_error() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            RENDER_IMPORTED_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--assets-dir",
+            "tests/fixtures/nonexistent-assets-dir",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("RENDER_ASSET_ERROR"));
 }
 
 #[test]

@@ -1,0 +1,112 @@
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use engine_assets::{import_gltf, import_texture, AssetStore};
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
+
+fn scratch_store_dir() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("engine-assets-test-{}-{n}", std::process::id()))
+}
+
+fn count_files(dir: &Path) -> usize {
+    if !dir.exists() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in std::fs::read_dir(&current).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                stack.push(entry.path());
+            } else {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn put_is_idempotent_and_content_addressed() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let hash_a = store.put(b"hello world").unwrap();
+    let hash_b = store.put(b"hello world").unwrap();
+    assert_eq!(hash_a, hash_b);
+    assert_eq!(count_files(&dir), 1);
+    assert_eq!(store.get(&hash_a).unwrap(), b"hello world");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_a_gltf_twice_produces_the_same_mesh_hash() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let first = import_gltf(&fixture("box.gltf"), &store).unwrap();
+    let second = import_gltf(&fixture("box.gltf"), &store).unwrap();
+    assert_eq!(first.mesh_hash, second.mesh_hash);
+    assert_eq!(first.base_color, [0.8, 0.0, 0.0]);
+    assert_eq!(first.texture_hash, None);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_a_textured_gltf_produces_a_texture_hash_and_stores_a_png() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let imported = import_gltf(&fixture("box_textured.gltf"), &store).unwrap();
+    let texture_hash = imported.texture_hash.expect("expected an embedded texture");
+    let bytes = store.get(&texture_hash).unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert!(decoded.width() > 0 && decoded.height() > 0);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn multi_primitive_gltf_is_a_structured_error() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let err = import_gltf(&fixture("multi_primitive.gltf"), &store).unwrap_err();
+    assert_eq!(err.code(), "ASSET_GLTF_UNSUPPORTED");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn missing_normals_gltf_is_a_structured_error() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let err = import_gltf(&fixture("missing_normals.gltf"), &store).unwrap_err();
+    assert_eq!(err.code(), "ASSET_GLTF_UNSUPPORTED");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn non_indexed_gltf_is_a_structured_error() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let err = import_gltf(&fixture("non_indexed.gltf"), &store).unwrap_err();
+    assert_eq!(err.code(), "ASSET_GLTF_UNSUPPORTED");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_a_loose_image_file_stores_it_as_png() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let hash = import_texture(&fixture("CesiumLogoFlat.png"), &store).unwrap();
+    let bytes = store.get(&hash).unwrap();
+    assert_eq!(
+        &bytes[0..8],
+        b"\x89PNG\r\n\x1a\n",
+        "stored bytes should be a PNG"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

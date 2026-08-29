@@ -8,6 +8,7 @@ use crate::SimSource;
 pub fn run(
     scene: &Path,
     to: &Path,
+    assets_dir: &Path,
     seed: u64,
     ticks: u64,
     width: u32,
@@ -28,7 +29,7 @@ pub fn run(
     };
     sim.run(ticks);
 
-    match engine_render::render_scene_to_png(&sim.world, width, height, to) {
+    match engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to) {
         Ok(()) => {
             if format.is_json() {
                 println!(

@@ -28,22 +28,27 @@ fn default_far() -> f32 {
     100.0
 }
 
-/// Hardcoded geometry only — glTF import is Phase 3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Hardcoded cube/plane geometry, or an imported mesh referenced by its
+/// content hash in the `engine-assets` store (see Phase 3 / ADR-0005).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MeshKind {
     Cube,
     Plane,
+    Asset(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeshRef {
     pub mesh: MeshKind,
 }
 
 /// Flat base color, modulated by a single hardcoded directional light in the
-/// fragment shader. Full PBR is not a Phase 2 goal.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// fragment shader, and optionally tinting a base color texture (referenced
+/// by content hash) sampled per-pixel. Full PBR is not a goal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     pub color: [f32; 3],
+    #[serde(default)]
+    pub texture: Option<String>,
 }

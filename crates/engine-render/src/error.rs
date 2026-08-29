@@ -16,6 +16,8 @@ pub enum RenderError {
         #[source]
         source: image::ImageError,
     },
+    #[error(transparent)]
+    AssetLoadFailed(#[from] engine_assets::AssetError),
 }
 
 impl RenderError {
@@ -27,6 +29,7 @@ impl RenderError {
             Self::DeviceRequestFailed(_) => "RENDER_DEVICE_ERROR",
             Self::ReadbackFailed(_) => "RENDER_READBACK_ERROR",
             Self::EncodeFailed { .. } => "RENDER_ENCODE_ERROR",
+            Self::AssetLoadFailed(_) => "RENDER_ASSET_ERROR",
         }
     }
 }

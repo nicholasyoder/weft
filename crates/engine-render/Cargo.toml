@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 engine-core = { path = "../engine-core" }
+engine-assets = { path = "../engine-assets" }
 hecs.workspace = true
 glam.workspace = true
 serde.workspace = true

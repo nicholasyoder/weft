@@ -59,7 +59,7 @@ fn load_mesh_ref(
 
 fn dump_mesh_ref(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
     e.get::<&MeshRef>()
-        .map(|m| ("MeshRef", serde_json::to_value(*m).unwrap()))
+        .map(|m| ("MeshRef", serde_json::to_value((*m).clone()).unwrap()))
 }
 
 fn load_material(
@@ -72,7 +72,7 @@ fn load_material(
 
 fn dump_material(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
     e.get::<&Material>()
-        .map(|m| ("Material", serde_json::to_value(*m).unwrap()))
+        .map(|m| ("Material", serde_json::to_value((*m).clone()).unwrap()))
 }
 
 pub fn components() -> ComponentRegistry {

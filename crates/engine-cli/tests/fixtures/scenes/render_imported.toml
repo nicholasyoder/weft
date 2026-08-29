@@ -1,0 +1,22 @@
+[[entity]]
+name = "camera"
+
+[entity.components.Transform]
+position = [2.0, 1.5, 2.5]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "imported_box"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.MeshRef]
+mesh = { asset = "d334da34b651685ed83d89c075b95722078b178df4da1228e12a9ff9b4a90225" }
+
+[entity.components.Material]
+color = [1.0, 1.0, 1.0]
+texture = "2ee1a0310d92cfcca69dcb3c0380e9612828f47172f8cb3b394ea0ddfb9f11e0"

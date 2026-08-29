@@ -5,11 +5,12 @@ use glam::Vec3;
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
-    pub indices: Vec<u16>,
+    pub indices: Vec<u32>,
 }
 
 /// Appends one quad face: `right x up` must equal `normal` (right-handed)
@@ -17,24 +18,26 @@ pub struct MeshData {
 /// required for backface culling to remove the correct (interior) faces.
 fn push_face(
     vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u16>,
+    indices: &mut Vec<u32>,
     center: Vec3,
     right: Vec3,
     up: Vec3,
     normal: Vec3,
     half_size: f32,
 ) {
-    let base = vertices.len() as u16;
+    let base = vertices.len() as u32;
     let corners = [
         center - right * half_size - up * half_size,
         center + right * half_size - up * half_size,
         center + right * half_size + up * half_size,
         center - right * half_size + up * half_size,
     ];
-    for corner in corners {
+    let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    for (corner, uv) in corners.into_iter().zip(uvs) {
         vertices.push(Vertex {
             position: corner.to_array(),
             normal: normal.to_array(),
+            uv,
         });
     }
     indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -60,6 +63,22 @@ pub fn cube() -> MeshData {
         push_face(&mut vertices, &mut indices, center, right, up, normal, 0.5);
     }
     MeshData { vertices, indices }
+}
+
+/// Converts an imported `engine-assets` mesh (plain position/normal/uv data)
+/// into the interleaved GPU-ready form the render pipeline uses.
+pub fn from_asset(data: &engine_assets::mesh::MeshData) -> MeshData {
+    let vertices = (0..data.positions.len())
+        .map(|i| Vertex {
+            position: data.positions[i],
+            normal: data.normals[i],
+            uv: data.uvs[i],
+        })
+        .collect();
+    MeshData {
+        vertices,
+        indices: data.indices.clone(),
+    }
 }
 
 /// A flat ground-sized quad in the XZ plane at y = 0, facing +Y.
