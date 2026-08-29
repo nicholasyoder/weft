@@ -1,0 +1,25 @@
+[package]
+name = "engine-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "engine"
+path = "src/main.rs"
+
+[lib]
+name = "engine_cli"
+path = "src/lib.rs"
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+hecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true

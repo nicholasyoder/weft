@@ -1,0 +1,57 @@
+use std::process::ExitCode;
+
+use crate::commands::OutputFormat;
+use crate::{verify_scenario_determinism, DeterminismResult};
+
+pub fn run(scenario: &str, seed: u64, ticks: u64, format: OutputFormat) -> ExitCode {
+    if ticks == 0 {
+        crate::diagnostics::CliError::invalid_ticks(ticks).print(format.is_json());
+        return ExitCode::FAILURE;
+    }
+
+    match verify_scenario_determinism(scenario, seed, ticks) {
+        Ok(json) => {
+            if format.is_json() {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "pass",
+                        "scenario": scenario,
+                        "seed": seed,
+                        "ticks": ticks,
+                        "world": json,
+                    })
+                );
+            } else {
+                println!(
+                    "PASS: scenario '{scenario}' is deterministic over {ticks} ticks at seed {seed}"
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(DeterminismResult::Error(e)) => {
+            e.print(format.is_json());
+            ExitCode::FAILURE
+        }
+        Err(DeterminismResult::Mismatch(fail)) => {
+            if format.is_json() {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "fail",
+                        "scenario": fail.scenario,
+                        "reason": "nondeterministic",
+                        "run_a": fail.json_a,
+                        "run_b": fail.json_b,
+                    })
+                );
+            } else {
+                println!(
+                    "FAIL: scenario '{}' is NOT deterministic — two runs with the same seed produced different world state",
+                    fail.scenario
+                );
+            }
+            ExitCode::FAILURE
+        }
+    }
+}

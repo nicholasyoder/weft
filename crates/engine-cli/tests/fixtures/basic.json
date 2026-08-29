@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "scenario": "basic",
+  "seed": 42,
+  "ticks": 30,
+  "dump_every": 10,
+  "inputs": []
+}

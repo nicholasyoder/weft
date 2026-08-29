@@ -43,7 +43,7 @@ Naming, crate boundaries, and even the `crates/` vs. flat-workspace layout are a
 
 ---
 
-## Phase 0 — Deterministic core loop (no rendering yet)
+## Phase 0 — Deterministic core loop (no rendering yet) — **done** (2026-08-28)
 
 **Goal**: prove the ECS + deterministic scheduler + CLI + JSON-inspection loop end-to-end before spending any time on graphics.
 
@@ -56,6 +56,8 @@ Naming, crate boundaries, and even the `crates/` vs. flat-workspace layout are a
 **Definition of done**: `engine test` runs a scripted scenario twice with the same seed and produces byte-identical `engine inspect` JSON output both times; a deliberately-introduced nondeterminism (e.g. an ambient RNG call) is caught by this test failing.
 
 **Crates to evaluate**: `hecs` (default), `glam` (math), `clap` (CLI), `serde`/`serde_json` (state dumps), a seeded PRNG (`rand` with an explicit `SmallRng`/`ChaCha8Rng` instance, not the global generator).
+
+**Implementation notes**: built as `crates/engine-core` + `crates/engine-cli` only — `engine-scene`/`engine-render`/`engine-assets`/`engine-physics`/`engine-script`/`engine-mcp` and `games/sandbox` remain unscaffolded until their own phases need them. Went with `ChaCha8Rng` over `SmallRng` and codified a hecs-iteration-order sorting rule; see [ADR-0002](docs/decisions/0002-deterministic-rng-and-hecs-iteration-order.md). `cargo test --workspace` (16 tests) is green, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` both pass.
 
 ---
 

@@ -1,0 +1,13 @@
+[package]
+name = "engine-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+hecs.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+thiserror.workspace = true

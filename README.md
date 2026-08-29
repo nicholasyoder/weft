@@ -10,7 +10,7 @@ This project starts from the opposite assumption: every operation should be doab
 
 ## Status
 
-Planning phase. No code yet. Language, scope, and build-vs-wrap decisions are locked (Rust, 3D from day one, built from scratch on focused libraries — see [ADR-0001](docs/decisions/0001-rust-3d-from-scratch.md)); the phased build plan lives in [ROADMAP.md](ROADMAP.md). **The roadmap is explicitly a living document** — every phase boundary is a checkpoint to reconsider the architecture as real constraints show up, not a fixed spec.
+Phase 0 (deterministic core loop) is done: a Cargo workspace with `engine-core` (hecs-backed ECS, fixed-timestep scheduler, seeded `ChaCha8Rng`) and `engine-cli` (the `engine` binary — `test`/`inspect`/`replay` subcommands, `--format json`) exists under `crates/`, with a green `cargo test --workspace` suite proving byte-identical determinism across runs and catching a deliberately-introduced ambient-RNG regression. Language, scope, and build-vs-wrap decisions are locked (Rust, 3D from day one, built from scratch on focused libraries — see [ADR-0001](docs/decisions/0001-rust-3d-from-scratch.md)); RNG-algorithm and ECS-iteration-order determinism policy are in [ADR-0002](docs/decisions/0002-deterministic-rng-and-hecs-iteration-order.md). The phased build plan lives in [ROADMAP.md](ROADMAP.md). **The roadmap is explicitly a living document** — every phase boundary is a checkpoint to reconsider the architecture as real constraints show up, not a fixed spec.
 
 ## Where to start
 
