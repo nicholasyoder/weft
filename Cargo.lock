@@ -2819,6 +2819,7 @@ dependencies = [
  "engine-physics",
  "engine-render",
  "engine-scene",
+ "engine-script",
  "glam 0.29.3",
  "hecs",
  "serde",

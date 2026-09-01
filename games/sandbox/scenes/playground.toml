@@ -1,12 +1,16 @@
 # The first Weft-built game: a physics playground. WASD rolls the red ball
 # around a walled arena with a fixed obstacle pillar. See ADR-0010 and
-# ROADMAP.md Phase 8.
+# ROADMAP.md Phase 8. Three gold pickups are scripted (games/sandbox/
+# scripts/pickup.lua, see ADR-0013): roll up to one and hold E to collect
+# it — the first content actually using Weft's scripting API in a real,
+# live-playable game rather than a batch test fixture.
 #
 # System order matters: "player_control" must run before "physics" — it sets
 # a pending force on the ball's rigid body that "physics" consumes and clears
 # every tick (see PhysicsState::apply_force's doc comment). "camera_follow"
 # must run after "physics" so it reads the ball's post-physics position for
-# this tick, not last tick's.
+# this tick, not last tick's. Script dispatch (the pickups) is automatic —
+# any scene with a Script component gets one, no [[system]] entry needed.
 
 [[entity]]
 name = "ground"
@@ -115,6 +119,45 @@ shape = { kind = "box", half_extents = [0.75, 1.0, 0.75] }
 mesh = { asset = "cfd8be5091c1bfeaa3b98b3d4a5bdc918e7c31d4de0c980a795579ef568a7365" }
 [entity.components.Material]
 color = [0.500000, 0.500000, 0.550000]
+
+[[entity]]
+name = "pickup_1"
+[entity.components.Transform]
+position = [4.0, 0.4, 4.0]
+scale = [0.3, 0.3, 0.3]
+[entity.components.MeshRef]
+mesh = "sphere"
+[entity.components.Material]
+color = [0.9, 0.75, 0.1]
+[entity.components.Script]
+path = "scripts/pickup.lua"
+function = "on_tick"
+
+[[entity]]
+name = "pickup_2"
+[entity.components.Transform]
+position = [-4.0, 0.4, -3.0]
+scale = [0.3, 0.3, 0.3]
+[entity.components.MeshRef]
+mesh = "sphere"
+[entity.components.Material]
+color = [0.9, 0.75, 0.1]
+[entity.components.Script]
+path = "scripts/pickup.lua"
+function = "on_tick"
+
+[[entity]]
+name = "pickup_3"
+[entity.components.Transform]
+position = [0.0, 0.4, -6.5]
+scale = [0.3, 0.3, 0.3]
+[entity.components.MeshRef]
+mesh = "sphere"
+[entity.components.Material]
+color = [0.9, 0.75, 0.1]
+[entity.components.Script]
+path = "scripts/pickup.lua"
+function = "on_tick"
 
 [[entity]]
 name = "player"

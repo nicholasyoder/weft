@@ -32,9 +32,27 @@ fn dump_camera_follow(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::
         .map(|c| ("CameraFollow", serde_json::to_value(*c).unwrap()))
 }
 
+/// The sandbox's own extended registry: engine-cli's base components/systems
+/// plus `PlayerControl`/`CameraFollow`. Exposed separately from `play` so
+/// tests can build a `Sim`/dispatch scripts against the exact same
+/// registrations the real game uses, without needing a window.
+pub fn registry() -> (
+    engine_scene::ComponentRegistry,
+    engine_scene::SystemRegistry,
+) {
+    let mut components = engine_cli::registry::components();
+    components.register("PlayerControl", load_player_control, dump_player_control);
+    components.register("CameraFollow", load_camera_follow, dump_camera_follow);
+
+    let mut systems = engine_cli::registry::systems();
+    systems.register("player_control", player_control::player_control_system);
+    systems.register("camera_follow", camera_follow::camera_follow_system);
+
+    (components, systems)
+}
+
 /// Opens a window and runs `scene` live, with the sandbox's own extended
-/// registry (engine-cli's base components/systems plus `PlayerControl`/
-/// `CameraFollow`). The one place the registry-building +
+/// registry ([`registry`]). The one place the registry-building +
 /// `engine_cli::live::play` call is joined, so both `main.rs` and
 /// `tests/play.rs` share it (same "one core fn, thin wrappers" shape
 /// ADR-0007 established for engine-cli itself).
@@ -43,13 +61,7 @@ pub fn play(
     assets_dir: &Path,
     max_ticks: Option<u64>,
 ) -> Result<(), engine_cli::diagnostics::CliError> {
-    let mut components = engine_cli::registry::components();
-    components.register("PlayerControl", load_player_control, dump_player_control);
-    components.register("CameraFollow", load_camera_follow, dump_camera_follow);
-
-    let mut systems = engine_cli::registry::systems();
-    systems.register("player_control", player_control::player_control_system);
-    systems.register("camera_follow", camera_follow::camera_follow_system);
+    let (components, systems) = registry();
 
     engine_cli::live::play(
         scene,

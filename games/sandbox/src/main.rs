@@ -18,8 +18,34 @@ fn main() -> ExitCode {
             other => scene = Some(PathBuf::from(other)),
         }
     }
-    let scene = scene.unwrap_or_else(|| manifest_dir.join("scenes/playground.toml"));
+    // Resolve a caller-supplied scene path against the *original* working
+    // directory before pinning CWD below — otherwise a relative path typed
+    // at the shell would resolve against the wrong directory.
+    let scene = match scene {
+        Some(path) => match std::path::absolute(&path) {
+            Ok(abs) => abs,
+            Err(e) => {
+                eprintln!("failed to resolve scene path '{}': {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => manifest_dir.join("scenes/playground.toml"),
+    };
     let assets_dir = manifest_dir.join("assets");
+
+    // A scene's `Script.path` fields are plain filesystem paths, resolved
+    // relative to the process's working directory (`ScriptHost` has no
+    // scene-relative path concept) — pin CWD to this crate's own root so
+    // `cargo run -p sandbox` behaves the same regardless of which directory
+    // it's invoked from, matching the crate-relative convention every
+    // script path in this repo already uses (see games/sandbox/scripts/).
+    if let Err(e) = std::env::set_current_dir(&manifest_dir) {
+        eprintln!(
+            "failed to set working directory to '{}': {e}",
+            manifest_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
 
     match sandbox::play(&scene, &assets_dir, max_ticks) {
         Ok(()) => ExitCode::SUCCESS,
