@@ -38,6 +38,6 @@ Neither lives in `crates/engine-*` or the Rust workspace. Both are external to W
 
 ## Revisit when
 
-- `games/sandbox` needs its first real 3D asset — at that point, actually prototype one or both patterns against a concrete need rather than this ADR's current level of abstraction, and record what was learned (likely as an update here or a follow-up ADR).
+- ~~`games/sandbox` needs its first real 3D asset~~ — **done** (2026-09-01): the headless Blender-scripting pattern was prototyped end-to-end (`tools/asset-gen/generate_crate.py` → `engine import`, no engine changes needed — see ROADMAP.md's Phase 8 follow-up notes for the full account and the real environment friction hit along the way). The interactive `blender-mcp` pattern remains unprototyped — this sandbox has no Blender GUI/display to exercise it, and it's the developer-workstation path this ADR always expected to be tried on a real machine, not here.
 - A developer/user reports friction with either pattern (e.g. `blender-mcp`'s live-session requirement proves annoying in practice, or headless scripts prove too limited for the content actually needed) — revisit the split rather than assuming it holds.
 - A local ML model's GPU/VRAM floor drops enough to run on modest consumer hardware without a live Blender session at all — that could become a third first-class pattern rather than an opt-in toggle inside `blender-mcp`.

@@ -87,10 +87,15 @@ scale = [1.5, 2.0, 1.5]
 body_type = "fixed"
 [entity.components.Collider]
 shape = { kind = "box", half_extents = [0.75, 1.0, 0.75] }
+# First real imported asset (ADR-0009's "headless Blender scripting"
+# pattern, prototyped via tools/asset-gen/generate_crate.py) — a beveled
+# crate mesh, in place of the plain hardcoded cube every other obstacle
+# still uses. Collider stays a box; the crate's silhouette is close enough
+# to its unit-cube base that the existing half_extents still fit.
 [entity.components.MeshRef]
-mesh = "cube"
+mesh = { asset = "9fa2a8c25ec822085f1cbcfb7b68f162521bc6f60a178e6317b219c121fa29b3" }
 [entity.components.Material]
-color = [0.45, 0.4, 0.3]
+color = [0.450000, 0.300000, 0.160000]
 
 [[entity]]
 name = "player"
