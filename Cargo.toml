@@ -5,6 +5,7 @@ members = [
     "crates/engine-scene",
     "crates/engine-assets",
     "crates/engine-render",
+    "crates/engine-physics",
     "crates/engine-script",
     "crates/engine-cli",
     "crates/engine-mcp",
@@ -38,3 +39,4 @@ notify = "8"
 notify-debouncer-mini = "0.7"
 rmcp = "3.2"
 tokio = "1"
+rapier3d = "0.35"
