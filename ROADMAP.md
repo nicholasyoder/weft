@@ -154,17 +154,29 @@ Naming, crate boundaries, and even the `crates/` vs. flat-workspace layout are a
 
 ---
 
-## Phase 7 — Generative content integrations
+## Phase 7 — Generative content integrations — **revised** (2026-09-01)
 
-- Wire Meshy and/or Tripo3D's REST APIs into `engine import` as an alternative asset source: agent describes an asset in natural language, the API call produces a glTF/mesh+texture result, which flows through the same Phase 3 import path as any hand-authored asset.
-- Evaluate NVIDIA ACE-style patterns for LLM-driven NPC dialogue/behavior as an optional runtime layer, per [research/02](research/02-world-models-and-generative-tooling.md#5-npcdialogue-agent-patterns-nvidia-ace-are-mature-and-shippable). Not a core-engine dependency — an opt-in gameplay-layer feature.
+- ~~Wire Meshy and/or Tripo3D's REST APIs into `engine import` as an alternative asset source~~ — **rejected, not deferred**: the user does not want any external asset-generation API hardcoded into the engine; asset generation is a developer-side workflow, not an engine feature. See [ADR-0009](docs/decisions/0009-asset-generation-workflow.md), which lands on two developer-facing patterns instead — an interactive agent+Blender-MCP workflow for creative/one-off assets, and headless Blender (`bpy`) scripting for deterministic/batch content — both producing plain glTF that flows through the existing, already-source-agnostic `engine import` (Phase 3). Neither pattern is built ahead of need; the first real prototype is deferred to whenever `games/sandbox` (Phase 8) needs a concrete asset. Human-authored art must work identically to generated content — this was never actually at risk given Phase 3's design, but is now an explicit constraint to hold onto.
+- Evaluate NVIDIA ACE-style patterns for LLM-driven NPC dialogue/behavior as an optional runtime layer, per [research/02](research/02-world-models-and-generative-tooling.md#5-npcdialogue-agent-patterns-nvidia-ace-are-mature-and-shippable). Not a core-engine dependency — an opt-in gameplay-layer feature. Still open; no test game exists yet to demand it.
 - Explicitly deferred, not scheduled: any neural-world-model-based rendering layer (Genie/Oasis-style). Revisit per the "revisit when" criteria in [research/00](research/00-synthesis-and-recommendations.md#layer-5--contentasset-pipeline-where-generative-ai-actually-plugs-in) — no sooner than a public, stable, controllable API exists for one of these models.
+
+---
+
+## Phase 8 — First test game (`games/sandbox`)
+
+**Goal**: stand up the first real game built with Weft, so every deliberately-deferred "let real usage demand the shape" item (Phase 6's gameplay substrate, Phase 7's asset-generation prototype) has a concrete need to react to instead of being guessed at speculatively.
+
+- Scaffold `games/sandbox` as a real crate/project using the engine, not a hardcoded `engine-cli` scenario.
+- Build whatever minimal gameplay substrate the first playable milestone actually demands — input handling is the near-certain first piece, since nothing in the engine reads player input yet.
+- Prototype one of ADR-0009's two asset-generation patterns against a real asset this game needs, and record what was learned.
+
+**Definition of done**: TBD precisely once the game's first milestone is scoped; at minimum, something a person can run and interact with via `engine run`, built without adding engine capability that isn't demanded by this game.
 
 ---
 
 ## Not yet scheduled (deliberately)
 
-These are real future needs but don't have a phase number yet because scoping them now would be speculative ahead of the constraints Phases 0–7 will surface: audio, networking/multiplayer, a packaging/export pipeline for shipping builds, animation blending/state machines beyond the basics, and any optional GUI layer (which, per [ADR-0001](docs/decisions/0001-rust-3d-from-scratch.md) and the engine's core thesis, must be built strictly on top of the same CLI/API surface, never as a capability's only entry point).
+These are real future needs but don't have a phase number yet because scoping them now would be speculative ahead of the constraints Phases 0–8 will surface: audio, networking/multiplayer, a packaging/export pipeline for shipping builds, animation blending/state machines beyond the basics, and any optional GUI layer (which, per [ADR-0001](docs/decisions/0001-rust-3d-from-scratch.md) and the engine's core thesis, must be built strictly on top of the same CLI/API surface, never as a capability's only entry point).
 
 ---
 
