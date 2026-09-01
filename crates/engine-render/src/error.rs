@@ -10,6 +10,10 @@ pub enum RenderError {
     DeviceRequestFailed(String),
     #[error("failed to read back the rendered frame: {0}")]
     ReadbackFailed(String),
+    #[error("failed to create a window surface: {0}")]
+    SurfaceCreateFailed(String),
+    #[error("failed to acquire the next surface frame: {0}")]
+    SurfaceAcquireFailed(String),
     #[error("failed to write PNG to '{path}': {source}")]
     EncodeFailed {
         path: String,
@@ -28,6 +32,8 @@ impl RenderError {
             Self::AdapterRequestFailed(_) => "RENDER_ADAPTER_ERROR",
             Self::DeviceRequestFailed(_) => "RENDER_DEVICE_ERROR",
             Self::ReadbackFailed(_) => "RENDER_READBACK_ERROR",
+            Self::SurfaceCreateFailed(_) => "RENDER_SURFACE_CREATE_ERROR",
+            Self::SurfaceAcquireFailed(_) => "RENDER_SURFACE_ACQUIRE_ERROR",
             Self::EncodeFailed { .. } => "RENDER_ENCODE_ERROR",
             Self::AssetLoadFailed(_) => "RENDER_ASSET_ERROR",
         }

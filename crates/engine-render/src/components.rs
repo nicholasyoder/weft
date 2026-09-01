@@ -35,6 +35,7 @@ fn default_far() -> f32 {
 pub enum MeshKind {
     Cube,
     Plane,
+    Sphere,
     Asset(String),
 }
 

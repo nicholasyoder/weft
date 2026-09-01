@@ -105,6 +105,20 @@ impl CliError {
         .with_context(serde_json::json!({ "path": path.display().to_string() }))
     }
 
+    pub fn play_window_init_failed(source: &str) -> Self {
+        Self::new(
+            "PLAY_WINDOW_INIT_ERROR",
+            format!("failed to open a window for 'engine play': {source}"),
+        )
+    }
+
+    pub fn play_event_loop_failed(source: &str) -> Self {
+        Self::new(
+            "PLAY_EVENT_LOOP_ERROR",
+            format!("the 'engine play' event loop failed: {source}"),
+        )
+    }
+
     pub fn print(&self, json: bool) {
         if json {
             eprintln!("{}", serde_json::json!({ "error": self }));

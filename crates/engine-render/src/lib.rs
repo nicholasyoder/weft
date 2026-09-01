@@ -2,12 +2,14 @@ mod components;
 mod error;
 mod gpu;
 pub mod mesh;
+mod window;
 
 use std::path::Path;
 
 pub use components::{Camera, Material, MeshKind, MeshRef};
 pub use error::RenderError;
-pub use gpu::render_scene;
+pub use gpu::{render_scene, render_scene_with_context, RenderContext};
+pub use window::WindowRenderer;
 
 /// Renders `world` and writes it to `path` as a PNG. The only entry point
 /// `engine-cli` needs — pixel-buffer and `image`-crate details stay inside

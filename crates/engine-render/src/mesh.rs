@@ -65,6 +65,49 @@ pub fn cube() -> MeshData {
     MeshData { vertices, indices }
 }
 
+/// A unit-radius (0.5) smooth-shaded UV sphere — smooth-shaded (unlike
+/// `cube()`'s per-face flat shading) because a rolling ball reads visually
+/// wrong flat-shaded. Shared vertices per (lat, lon) sample, normals equal
+/// to the (normalized) position since it's centered at the origin.
+pub fn sphere() -> MeshData {
+    const SEGMENTS: u32 = 16; // longitude subdivisions
+    const RINGS: u32 = 12; // latitude subdivisions
+    const RADIUS: f32 = 0.5;
+
+    let mut vertices = Vec::new();
+    for ring in 0..=RINGS {
+        let v = ring as f32 / RINGS as f32;
+        let phi = v * std::f32::consts::PI; // 0 (top) .. PI (bottom)
+        for seg in 0..=SEGMENTS {
+            let u = seg as f32 / SEGMENTS as f32;
+            let theta = u * std::f32::consts::TAU;
+            let dir = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
+            vertices.push(Vertex {
+                position: (dir * RADIUS).to_array(),
+                normal: dir.to_array(),
+                uv: [u, v],
+            });
+        }
+    }
+
+    let mut indices = Vec::new();
+    let stride = SEGMENTS + 1;
+    for ring in 0..RINGS {
+        for seg in 0..SEGMENTS {
+            let a = ring * stride + seg;
+            let b = a + stride;
+            // Wound so cross(v1-v0, v2-v0) points outward (verified against
+            // this parametrization's actual coordinates, not assumed) —
+            // required for `cull_mode: Back` to cull the correct
+            // (interior) faces, same requirement `push_face`'s doc comment
+            // states for the cube/plane meshes.
+            indices.extend_from_slice(&[a, a + 1, b, a + 1, b + 1, b]);
+        }
+    }
+
+    MeshData { vertices, indices }
+}
+
 /// Converts an imported `engine-assets` mesh (plain position/normal/uv data)
 /// into the interleaved GPU-ready form the render pipeline uses.
 pub fn from_asset(data: &engine_assets::mesh::MeshData) -> MeshData {

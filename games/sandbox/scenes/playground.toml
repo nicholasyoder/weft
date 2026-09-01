@@ -1,0 +1,120 @@
+# The first Weft-built game: a physics playground. WASD rolls the red ball
+# around a walled arena with a fixed obstacle pillar. See ADR-0010 and
+# ROADMAP.md Phase 8.
+#
+# System order matters: "player_control" must run before "physics" — it sets
+# a pending force on the ball's rigid body that "physics" consumes and clears
+# every tick (see PhysicsState::apply_force's doc comment).
+
+[[entity]]
+name = "ground"
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+scale = [5.0, 1.0, 5.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [10.0, 0.1, 10.0] }
+[entity.components.MeshRef]
+mesh = "plane"
+[entity.components.Material]
+color = [0.3, 0.32, 0.35]
+
+[[entity]]
+name = "wall_north"
+[entity.components.Transform]
+position = [0.0, 1.0, -9.5]
+scale = [20.0, 2.0, 1.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [10.0, 1.0, 0.5] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.5, 0.5, 0.55]
+
+[[entity]]
+name = "wall_south"
+[entity.components.Transform]
+position = [0.0, 1.0, 9.5]
+scale = [20.0, 2.0, 1.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [10.0, 1.0, 0.5] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.5, 0.5, 0.55]
+
+[[entity]]
+name = "wall_east"
+[entity.components.Transform]
+position = [9.5, 1.0, 0.0]
+scale = [1.0, 2.0, 20.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [0.5, 1.0, 10.0] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.5, 0.5, 0.55]
+
+[[entity]]
+name = "wall_west"
+[entity.components.Transform]
+position = [-9.5, 1.0, 0.0]
+scale = [1.0, 2.0, 20.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [0.5, 1.0, 10.0] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.5, 0.5, 0.55]
+
+[[entity]]
+name = "pillar"
+[entity.components.Transform]
+position = [2.0, 1.0, -2.0]
+scale = [1.5, 2.0, 1.5]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [0.75, 1.0, 0.75] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.45, 0.4, 0.3]
+
+[[entity]]
+name = "player"
+[entity.components.Transform]
+position = [0.0, 2.0, 4.0]
+[entity.components.RigidBody]
+body_type = "dynamic"
+[entity.components.Collider]
+shape = { kind = "sphere", radius = 0.5 }
+restitution = 0.1
+friction = 0.6
+[entity.components.MeshRef]
+mesh = "sphere"
+[entity.components.Material]
+color = [0.85, 0.2, 0.2]
+[entity.components.PlayerControl]
+force = 12.0
+
+[[entity]]
+name = "camera"
+[entity.components.Transform]
+position = [0.0, 9.0, 12.0]
+[entity.components.Camera]
+target = [0.0, 0.5, 0.0]
+
+[[system]]
+name = "player_control"
+[[system]]
+name = "physics"

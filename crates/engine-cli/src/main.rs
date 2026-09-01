@@ -60,6 +60,27 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
+    /// Open a window and run a scene live: a real-time, keyboard-driven
+    /// loop rather than a fixed batch of ticks. CLI-only — no MCP tool,
+    /// same posture as `--watch` (see AGENTS.md).
+    Play {
+        scene: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
+        #[arg(long, default_value_t = 1024)]
+        width: u32,
+        #[arg(long, default_value_t = 768)]
+        height: u32,
+        /// Auto-exit after this many sim ticks — the non-interactive
+        /// escape hatch that makes `play` testable without a human at the
+        /// keyboard.
+        #[arg(long)]
+        max_ticks: Option<u64>,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
     /// Convert a glTF file or a loose image file into the content-addressed
     /// asset store, emitting a scene-text-file fragment ready to paste in.
     Import {
@@ -134,6 +155,15 @@ fn main() -> ExitCode {
             height,
             format,
         } => commands::render::run(&scene, &to, &assets_dir, seed, ticks, width, height, format),
+        Command::Play {
+            scene,
+            seed,
+            assets_dir,
+            width,
+            height,
+            max_ticks,
+            format,
+        } => commands::play::run(&scene, seed, &assets_dir, width, height, max_ticks, format),
         Command::Import {
             input,
             assets_dir,

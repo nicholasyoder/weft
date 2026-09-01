@@ -61,3 +61,11 @@ Every operation is a pure function of `(seed, scene-or-scenario, referenced .lua
 ## Watching a scene/script while iterating
 
 `engine run <scene> --watch` reruns the full `--ticks` budget from scratch on every save to the scene file or any `.lua` file it references (one file-watch mechanism for both), printing one JSON event per run/reload plus a `{"event": "watching"}` line once the watcher is actually armed. It never exits or crashes on a bad edit — a broken script produces the same structured `{status: "error", code: "..."}` shape and the process keeps watching. This is a CLI-only, long-running mode; there is no MCP equivalent (see above) — an agent that wants the same loop calls `weft_run` again after each edit.
+
+## Live windowed play (CLI-only)
+
+`engine play <scene> [--seed 1] [--assets-dir assets] [--width 1024] [--height 768] [--max-ticks N] [--format]` opens a real window and runs the scene live: a wall-clock-paced fixed-timestep loop, not a fixed batch of ticks, reading live keyboard state (WASD + Space + Escape, see `engine_core::Input`/`KeyCode`) into `Resources` every tick (see [ADR-0010](docs/decisions/0010-live-input-and-windowed-run-loop.md)). Escape or closing the window exits cleanly (exit code 0); `--max-ticks` auto-exits after N sim ticks with no human input, which is what makes this testable at all (see `crates/engine-cli/tests/play.rs`).
+
+Like `--watch`, this is CLI-only — no MCP tool (`play` opens a window and blocks on a live event loop; it doesn't fit MCP's one-shot request/response shape). It needs a real windowing backend (X11/Wayland/etc., e.g. via `Xvfb`) to create a window at all — unlike `engine render`, `Backends::VULKAN` + Mesa's lavapipe alone isn't sufficient (see ADR-0004's headless note, which that command's offscreen-only path doesn't share).
+
+`play` makes no determinism claim of its own beyond what `Sim::step()` already guarantees (each tick is still a pure function of its inputs) — the wall-clock accumulator pacing around it, and live human keyboard input, are both inherently non-reproducible. Recording/replaying a `play` session deterministically is explicitly out of scope for now (see ADR-0010's "revisit when").

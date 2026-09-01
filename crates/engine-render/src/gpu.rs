@@ -31,12 +31,470 @@ struct Drawable {
     texture: Option<String>,
 }
 
-pub fn render_scene(
+type MeshBuffers = (wgpu::Buffer, wgpu::Buffer, u32);
+
+/// Instance/adapter/device/queue — the part of the GPU setup that a live
+/// windowed loop and a one-shot offscreen render share identically.
+/// Vulkan/Metal/DX12 (this engine's only targeted backends, per
+/// ADR-0004/ADR-0010) don't need `InstanceDescriptor::display` pre-set —
+/// `Instance::create_surface` derives both window and display handles from
+/// the window value itself (wgpu's `SurfaceTarget::DisplayAndWindow`), so
+/// headless and windowed instance construction share this one path; only
+/// `compatible_surface` on the adapter request differs.
+pub(crate) struct GraphicsCore {
+    // Kept alive even though nothing reads it after adapter creation, out
+    // of caution: an adapter/device are generally expected to be used
+    // alongside the instance that created them, and keeping it costs
+    // nothing. (The actual root cause of a SIGSEGV hit while debugging this
+    // phase turned out to be unrelated — see the `InstanceFlags::empty()`
+    // comment in `make_instance` and ADR-0010 — but there's no reason to
+    // reintroduce an early drop this crate never needed in the first
+    // place.)
+    #[allow(dead_code)]
+    instance: wgpu::Instance,
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+}
+
+impl GraphicsCore {
+    pub(crate) fn new_headless(backends: wgpu::Backends) -> Result<Self, RenderError> {
+        let instance = Self::make_instance(backends);
+        pollster::block_on(Self::request(instance, None))
+    }
+
+    /// Builds a core plus a `Surface` for `window`. Returns the surface
+    /// separately (rather than storing it here) since `RenderContext` — the
+    /// type built from this core — has no notion of a presentation target;
+    /// only `WindowRenderer` (which owns this surface) does.
+    pub(crate) fn new_windowed(
+        window: std::sync::Arc<winit::window::Window>,
+        backends: wgpu::Backends,
+    ) -> Result<(Self, wgpu::Surface<'static>), RenderError> {
+        let instance = Self::make_instance(backends);
+        let surface = instance
+            .create_surface(window)
+            .map_err(|e| RenderError::SurfaceCreateFailed(e.to_string()))?;
+        let core = pollster::block_on(Self::request(instance, Some(&surface)))?;
+        Ok((core, surface))
+    }
+
+    fn make_instance(backends: wgpu::Backends) -> wgpu::Instance {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            // Explicitly no DEBUG/VALIDATION (wgpu's debug-build default,
+            // via `InstanceFlags::from_build_config`) — with it on, wgpu-hal
+            // tags every resource via `VK_EXT_debug_utils`
+            // `set_object_name`, which was root-caused (via gdb) to
+            // segfault inside `libvulkan.so.1` under concurrent Vulkan
+            // instance creation from multiple threads (this project's own
+            // test suite; see ADR-0010). Not needed at runtime regardless.
+            flags: wgpu::InstanceFlags::empty(),
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        })
+    }
+
+    async fn request(
+        instance: wgpu::Instance,
+        compatible_surface: Option<&wgpu::Surface<'_>>,
+    ) -> Result<Self, RenderError> {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::None,
+                compatible_surface,
+                force_fallback_adapter: false,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| RenderError::AdapterRequestFailed(e.to_string()))?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("weft-render-device"),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| RenderError::DeviceRequestFailed(e.to_string()))?;
+
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
+    }
+}
+
+/// Everything device-dependent but target-independent: shader, bind group
+/// layouts, a render-pipeline cache (keyed by color target format, since an
+/// offscreen render and a windowed surface may use different formats), and
+/// every mesh/texture/sampler resource — built once and reused across
+/// frames. Persisting this (instead of rebuilding it on every call, as the
+/// pre-Phase-8 code did) is what makes a real-time loop viable: mesh and
+/// texture uploads stop happening every single frame.
+pub struct RenderContext {
+    // Rust drops struct fields in declaration order (top to bottom) — the
+    // opposite of local-variable drop order (reverse declaration), which is
+    // what the pre-Phase-8 single-function `render()` relied on implicitly
+    // (device/instance declared first, so dropped last). `core` is
+    // declared *last* here purely as a defensive precaution so every GPU
+    // resource below (which depends on `core.device`) is still dropped
+    // before it, matching that same safe ordering — not a confirmed fix for
+    // any specific bug (the actual SIGSEGV root-caused during this phase
+    // was the `set_object_name`/debug-labels issue fixed in
+    // `make_instance`; see ADR-0010), just no reason to risk the opposite.
+    shader: wgpu::ShaderModule,
+    bind_group_layout: wgpu::BindGroupLayout,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    pipeline_layout: wgpu::PipelineLayout,
+    pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    sampler: wgpu::Sampler,
+    white_bind_group: wgpu::BindGroup,
+    cube_buffers: MeshBuffers,
+    plane_buffers: MeshBuffers,
+    sphere_buffers: MeshBuffers,
+    mesh_cache: HashMap<String, MeshBuffers>,
+    texture_cache: HashMap<String, wgpu::BindGroup>,
+    core: GraphicsCore,
+}
+
+fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+        ],
+    }
+}
+
+impl RenderContext {
+    pub fn new_headless(backends: wgpu::Backends) -> Result<Self, RenderError> {
+        Self::from_core(GraphicsCore::new_headless(backends)?)
+    }
+
+    pub(crate) fn from_core(core: GraphicsCore) -> Result<Self, RenderError> {
+        let device = &core.device;
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("weft-shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("weft-uniform-layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("weft-texture-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("weft-pipeline-layout"),
+            bind_group_layouts: &[Some(&bind_group_layout), Some(&texture_bind_group_layout)],
+            immediate_size: 0,
+        });
+
+        let cube_buffers = upload_mesh(device, &mesh::cube());
+        let plane_buffers = upload_mesh(device, &mesh::plane());
+        let sphere_buffers = upload_mesh(device, &mesh::sphere());
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("weft-sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        // Untextured drawables sample a shared 1x1 white texture rather than
+        // branching in the shader — white * color reproduces the flat-color
+        // look exactly, so one shader code path covers both cases.
+        let white_bind_group = create_white_texture_bind_group(
+            device,
+            &core.queue,
+            &texture_bind_group_layout,
+            &sampler,
+        );
+
+        Ok(Self {
+            core,
+            shader,
+            bind_group_layout,
+            texture_bind_group_layout,
+            pipeline_layout,
+            pipelines: HashMap::new(),
+            sampler,
+            white_bind_group,
+            cube_buffers,
+            plane_buffers,
+            sphere_buffers,
+            mesh_cache: HashMap::new(),
+            texture_cache: HashMap::new(),
+        })
+    }
+
+    pub(crate) fn device(&self) -> &wgpu::Device {
+        &self.core.device
+    }
+
+    pub(crate) fn queue(&self) -> &wgpu::Queue {
+        &self.core.queue
+    }
+
+    fn pipeline_for(&mut self, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        let device = &self.core.device;
+        let shader = &self.shader;
+        let pipeline_layout = &self.pipeline_layout;
+        self.pipelines
+            .entry(format)
+            .or_insert_with(|| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("weft-pipeline"),
+                    layout: Some(pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Some(vertex_layout())],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: Some(wgpu::Face::Back),
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .clone()
+    }
+
+    /// Records one frame's render pass into `encoder` against `color_view`
+    /// (of `color_format`) and `depth_view`. Doesn't submit or present —
+    /// that's the caller's job, since the offscreen path needs to append a
+    /// copy-to-buffer step to the same encoder before submitting, while the
+    /// windowed path just submits and presents.
+    #[allow(clippy::too_many_arguments)]
+    fn draw(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        drawables: &[Drawable],
+        view_proj: Mat4,
+        color_view: &wgpu::TextureView,
+        color_format: wgpu::TextureFormat,
+        depth_view: &wgpu::TextureView,
+        assets_dir: &Path,
+    ) -> Result<(), RenderError> {
+        let pipeline = self.pipeline_for(color_format);
+        let asset_store = engine_assets::AssetStore::new(assets_dir);
+
+        let mut per_draw_state = Vec::with_capacity(drawables.len());
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("weft-render-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            pass.set_pipeline(&pipeline);
+
+            for drawable in drawables {
+                let uniforms = Uniforms {
+                    view_proj: view_proj.to_cols_array_2d(),
+                    model: drawable.transform.to_matrix().to_cols_array_2d(),
+                    color: [drawable.color[0], drawable.color[1], drawable.color[2], 1.0],
+                    light_dir: [LIGHT_DIR.x, LIGHT_DIR.y, LIGHT_DIR.z, 0.0],
+                };
+                let uniform_buffer =
+                    self.core
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("weft-draw-uniforms"),
+                            contents: bytemuck::bytes_of(&uniforms),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+                let bind_group = self
+                    .core
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("weft-draw-bind-group"),
+                        layout: &self.bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buffer.as_entire_binding(),
+                        }],
+                    });
+                per_draw_state.push((uniform_buffer, bind_group));
+
+                let (vertex_buffer, index_buffer, index_count) = match &drawable.mesh {
+                    MeshKind::Cube => (
+                        &self.cube_buffers.0,
+                        &self.cube_buffers.1,
+                        self.cube_buffers.2,
+                    ),
+                    MeshKind::Plane => (
+                        &self.plane_buffers.0,
+                        &self.plane_buffers.1,
+                        self.plane_buffers.2,
+                    ),
+                    MeshKind::Sphere => (
+                        &self.sphere_buffers.0,
+                        &self.sphere_buffers.1,
+                        self.sphere_buffers.2,
+                    ),
+                    MeshKind::Asset(hash) => {
+                        if !self.mesh_cache.contains_key(hash) {
+                            let buffers = load_mesh_buffers(hash, &self.core.device, &asset_store)?;
+                            self.mesh_cache.insert(hash.clone(), buffers);
+                        }
+                        let (vb, ib, count) = self.mesh_cache.get(hash).unwrap();
+                        (vb, ib, *count)
+                    }
+                };
+
+                let texture_bind_group = match &drawable.texture {
+                    Some(hash) => {
+                        if !self.texture_cache.contains_key(hash) {
+                            let bind_group = load_texture_bind_group(
+                                hash,
+                                &self.core.device,
+                                &self.core.queue,
+                                &asset_store,
+                                &self.texture_bind_group_layout,
+                                &self.sampler,
+                            )?;
+                            self.texture_cache.insert(hash.clone(), bind_group);
+                        }
+                        self.texture_cache.get(hash).unwrap()
+                    }
+                    None => &self.white_bind_group,
+                };
+
+                let (_, bind_group) = per_draw_state.last().unwrap();
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.set_bind_group(1, texture_bind_group, &[]);
+                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..index_count, 0, 0..1);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn make_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("weft-depth-target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+fn extract_scene(
     world: &hecs::World,
     width: u32,
     height: u32,
-    assets_dir: &Path,
-) -> Result<image::RgbaImage, RenderError> {
+) -> Result<(Mat4, Vec<Drawable>), RenderError> {
     let mut cameras: Vec<_> = world
         .query::<(&Transform, &Camera)>()
         .iter()
@@ -76,177 +534,41 @@ pub fn render_scene(
     let view = Mat4::look_at_rh(camera_transform.position, camera.target, Vec3::Y);
     let view_proj = projection * view;
 
-    pollster::block_on(render(
-        &drawables.into_iter().map(|(_, d)| d).collect::<Vec<_>>(),
-        view_proj,
-        width,
-        height,
-        assets_dir,
-    ))
+    Ok((view_proj, drawables.into_iter().map(|(_, d)| d).collect()))
 }
 
-async fn render(
-    drawables: &[Drawable],
-    view_proj: Mat4,
+/// Renders `world` at `width`x`height` and returns the pixels. Builds a
+/// fresh, one-shot `RenderContext` every call — the right tradeoff for a
+/// single PNG export, but not for a real-time loop (see
+/// `render_scene_with_context` / `WindowRenderer` for the persisted-context
+/// path a live loop should use instead).
+pub fn render_scene(
+    world: &hecs::World,
     width: u32,
     height: u32,
     assets_dir: &Path,
 ) -> Result<image::RgbaImage, RenderError> {
-    let asset_store = engine_assets::AssetStore::new(assets_dir);
+    let mut ctx = RenderContext::new_headless(wgpu::Backends::VULKAN)?;
+    render_scene_with_context(&mut ctx, world, width, height, assets_dir)
+}
 
-    let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
-    instance_desc.backends = wgpu::Backends::VULKAN;
-    let instance = wgpu::Instance::new(instance_desc);
+/// Like `render_scene`, but reuses an existing `RenderContext` (device,
+/// pipelines, mesh/texture caches) instead of building a new one — the path
+/// a caller rendering many frames (a live loop, a batch of scenes) should
+/// use. Not itself called by `WindowRenderer` — windowed presentation has
+/// no CPU pixel readback at all (see `WindowRenderer::render`), which is
+/// the actual perf-relevant difference; this fn's `read_back` stall is fine
+/// once per `engine render` invocation, not fine per frame.
+pub fn render_scene_with_context(
+    ctx: &mut RenderContext,
+    world: &hecs::World,
+    width: u32,
+    height: u32,
+    assets_dir: &Path,
+) -> Result<image::RgbaImage, RenderError> {
+    let (view_proj, drawables) = extract_scene(world, width, height)?;
 
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| RenderError::AdapterRequestFailed(e.to_string()))?;
-
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("weft-render-device"),
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| RenderError::DeviceRequestFailed(e.to_string()))?;
-
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("weft-shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-    });
-
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("weft-uniform-layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
-
-    let texture_bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("weft-texture-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("weft-pipeline-layout"),
-        bind_group_layouts: &[Some(&bind_group_layout), Some(&texture_bind_group_layout)],
-        immediate_size: 0,
-    });
-
-    let vertex_layout = wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float32x3,
-            },
-            wgpu::VertexAttribute {
-                offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                shader_location: 1,
-                format: wgpu::VertexFormat::Float32x3,
-            },
-            wgpu::VertexAttribute {
-                offset: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
-                shader_location: 2,
-                format: wgpu::VertexFormat::Float32x2,
-            },
-        ],
-    };
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("weft-pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(vertex_layout)],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: COLOR_FORMAT,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
-
-    let cube_mesh = mesh::cube();
-    let plane_mesh = mesh::plane();
-    let cube_buffers = upload_mesh(&device, &cube_mesh);
-    let plane_buffers = upload_mesh(&device, &plane_mesh);
-    let mut mesh_cache: HashMap<String, (wgpu::Buffer, wgpu::Buffer, u32)> = HashMap::new();
-
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("weft-sampler"),
-        address_mode_u: wgpu::AddressMode::Repeat,
-        address_mode_v: wgpu::AddressMode::Repeat,
-        address_mode_w: wgpu::AddressMode::Repeat,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-        ..Default::default()
-    });
-    // Untextured drawables sample a shared 1x1 white texture rather than
-    // branching in the shader — white * color reproduces the flat-color
-    // look exactly, so one shader code path covers both cases.
-    let white_bind_group =
-        create_white_texture_bind_group(&device, &queue, &texture_bind_group_layout, &sampler);
-    let mut texture_cache: HashMap<String, wgpu::BindGroup> = HashMap::new();
-
-    let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+    let color_texture = ctx.core.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("weft-color-target"),
         size: wgpu::Extent3d {
             width,
@@ -261,132 +583,64 @@ async fn render(
         view_formats: &[],
     });
     let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_view = make_depth_view(&ctx.core.device, width, height);
 
-    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("weft-depth-target"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("weft-render-encoder"),
-    });
-
-    // One uniform buffer + bind group per draw call: entity counts here are
-    // tiny (hardcoded/imported test scenes), so per-draw allocation is far
-    // simpler than dynamic-offset bookkeeping and easy to revisit if
-    // profiling ever says otherwise.
-    let mut per_draw_state = Vec::with_capacity(drawables.len());
-
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("weft-render-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &color_view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.05,
-                        g: 0.05,
-                        b: 0.08,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
+    let mut encoder = ctx
+        .core
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("weft-render-encoder"),
         });
+    ctx.draw(
+        &mut encoder,
+        &drawables,
+        view_proj,
+        &color_view,
+        COLOR_FORMAT,
+        &depth_view,
+        assets_dir,
+    )?;
 
-        pass.set_pipeline(&pipeline);
-
-        for drawable in drawables {
-            let uniforms = Uniforms {
-                view_proj: view_proj.to_cols_array_2d(),
-                model: drawable.transform.to_matrix().to_cols_array_2d(),
-                color: [drawable.color[0], drawable.color[1], drawable.color[2], 1.0],
-                light_dir: [LIGHT_DIR.x, LIGHT_DIR.y, LIGHT_DIR.z, 0.0],
-            };
-            let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("weft-draw-uniforms"),
-                contents: bytemuck::bytes_of(&uniforms),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("weft-draw-bind-group"),
-                layout: &bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
-            });
-            per_draw_state.push((uniform_buffer, bind_group));
-
-            let (vertex_buffer, index_buffer, index_count) = match &drawable.mesh {
-                MeshKind::Cube => (&cube_buffers.0, &cube_buffers.1, cube_buffers.2),
-                MeshKind::Plane => (&plane_buffers.0, &plane_buffers.1, plane_buffers.2),
-                MeshKind::Asset(hash) => {
-                    if !mesh_cache.contains_key(hash) {
-                        let buffers = load_mesh_buffers(hash, &device, &asset_store)?;
-                        mesh_cache.insert(hash.clone(), buffers);
-                    }
-                    let (vb, ib, count) = mesh_cache.get(hash).unwrap();
-                    (vb, ib, *count)
-                }
-            };
-
-            let texture_bind_group = match &drawable.texture {
-                Some(hash) => {
-                    if !texture_cache.contains_key(hash) {
-                        let bind_group = load_texture_bind_group(
-                            hash,
-                            &device,
-                            &queue,
-                            &asset_store,
-                            &texture_bind_group_layout,
-                            &sampler,
-                        )?;
-                        texture_cache.insert(hash.clone(), bind_group);
-                    }
-                    texture_cache.get(hash).unwrap()
-                }
-                None => &white_bind_group,
-            };
-
-            let (_, bind_group) = per_draw_state.last().unwrap();
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.set_bind_group(1, texture_bind_group, &[]);
-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..index_count, 0, 0..1);
-        }
-    }
-
-    let image = read_back(&device, &queue, encoder, &color_texture, width, height)?;
-    Ok(image)
+    read_back(
+        &ctx.core.device,
+        &ctx.core.queue,
+        encoder,
+        &color_texture,
+        width,
+        height,
+    )
 }
 
-fn upload_mesh(device: &wgpu::Device, data: &mesh::MeshData) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+pub(crate) fn draw_to_surface(
+    ctx: &mut RenderContext,
+    world: &hecs::World,
+    color_view: &wgpu::TextureView,
+    color_format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+    assets_dir: &Path,
+) -> Result<wgpu::CommandBuffer, RenderError> {
+    let (view_proj, drawables) = extract_scene(world, width, height)?;
+    let depth_view = make_depth_view(&ctx.core.device, width, height);
+    let mut encoder = ctx
+        .core
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("weft-window-render-encoder"),
+        });
+    ctx.draw(
+        &mut encoder,
+        &drawables,
+        view_proj,
+        color_view,
+        color_format,
+        &depth_view,
+        assets_dir,
+    )?;
+    Ok(encoder.finish())
+}
+
+fn upload_mesh(device: &wgpu::Device, data: &mesh::MeshData) -> MeshBuffers {
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("weft-mesh-vertices"),
         contents: bytemuck::cast_slice(&data.vertices),
@@ -404,7 +658,7 @@ fn load_mesh_buffers(
     hash: &str,
     device: &wgpu::Device,
     store: &engine_assets::AssetStore,
-) -> Result<(wgpu::Buffer, wgpu::Buffer, u32), RenderError> {
+) -> Result<MeshBuffers, RenderError> {
     let bytes = store.get(hash)?;
     let mesh_data = engine_assets::mesh::decode(&bytes)?;
     let render_mesh = mesh::from_asset(&mesh_data);

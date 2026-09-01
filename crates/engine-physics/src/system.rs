@@ -18,6 +18,27 @@ pub struct PhysicsState {
     bodies: HashMap<hecs::Entity, rp::RigidBodyHandle>,
 }
 
+impl PhysicsState {
+    /// Applies a continuous force to `entity`'s dynamic rigid body for this
+    /// tick. Rapier's `add_force` is a pending accumulator cleared every
+    /// `world.step()` — call this from a system registered *before*
+    /// "physics" in scene order so the force is still pending when
+    /// `physics_step` steps the world. Returns `false` (silent no-op, never
+    /// a panic) if `entity` has no registered body yet — e.g. its very
+    /// first tick, before `physics_step` has run once and lazily
+    /// registered it.
+    pub fn apply_force(&mut self, entity: hecs::Entity, force: glam::Vec3, wake_up: bool) -> bool {
+        let Some(&handle) = self.bodies.get(&entity) else {
+            return false;
+        };
+        let Some(body) = self.world.bodies.get_mut(handle) else {
+            return false;
+        };
+        body.add_force(vec3_to_rapier(force), wake_up);
+        true
+    }
+}
+
 fn build_collider(collider: &Collider) -> rp::ColliderBuilder {
     let builder = match collider.shape {
         ColliderShape::Box { half_extents } => {
@@ -159,6 +180,69 @@ mod tests {
 
         let position = sim.world.get::<&Transform>(ground).unwrap().position;
         assert_eq!(position, Vec3::ZERO);
+    }
+
+    #[test]
+    fn apply_force_accelerates_dynamic_body() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut().add_system("physics", physics_step);
+        let ball = sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Dynamic,
+            },
+            Collider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                restitution: 0.0,
+                friction: 0.5,
+            },
+            Transform::from_position(Vec3::new(0.0, 100.0, 0.0)),
+        ));
+
+        // physics_step lazily registers a spawned entity into PhysicsState
+        // on its first tick — apply_force needs that registration to have
+        // happened before it can find a handle for `ball`.
+        sim.step();
+
+        let applied = sim
+            .resources
+            .get_mut::<PhysicsState>()
+            .expect("physics_step should have inserted PhysicsState by now")
+            .apply_force(ball, Vec3::new(50.0, 0.0, 0.0), true);
+        assert!(
+            applied,
+            "expected apply_force to find the now-registered body"
+        );
+
+        sim.step();
+        let x = sim.world.get::<&Transform>(ball).unwrap().position.x;
+        assert!(
+            x > 0.0,
+            "expected a positive-X force to move the ball in +X, got x={x}"
+        );
+    }
+
+    #[test]
+    fn apply_force_on_unregistered_entity_is_a_silent_no_op() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        let ball = sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Dynamic,
+            },
+            Collider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                restitution: 0.0,
+                friction: 0.5,
+            },
+            Transform::from_position(Vec3::ZERO),
+        ));
+
+        // No `physics_step` has run, so nothing is registered yet.
+        let mut state = PhysicsState::default();
+        let applied = state.apply_force(ball, Vec3::new(1.0, 0.0, 0.0), true);
+        assert!(
+            !applied,
+            "expected apply_force to no-op before physics_step registers the entity"
+        );
     }
 
     #[test]

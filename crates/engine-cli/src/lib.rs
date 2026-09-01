@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod diagnostics;
+pub mod live;
 pub mod recording;
 pub mod registry;
 pub mod scenarios;
