@@ -109,6 +109,7 @@ fn step_and_dispatch(
             world: &mut sim.world,
             components,
             dumpers,
+            rng: &mut sim.rng,
             tick: sim.tick,
             dt: sim.dt,
         });

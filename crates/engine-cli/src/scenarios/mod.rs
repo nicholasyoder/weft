@@ -2,6 +2,7 @@ pub mod basic;
 pub mod broken_rng;
 pub mod despawn_demo;
 pub mod physics_demo;
+pub mod scripted_demo;
 
 use engine_core::inspect::ComponentDumper;
 use engine_core::sim::Sim;

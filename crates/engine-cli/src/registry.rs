@@ -12,6 +12,7 @@ use engine_script::Script;
 
 use crate::scenarios::basic::{dump_position, dump_velocity, movement_system, Position, Velocity};
 use crate::scenarios::despawn_demo::{despawn_after_system, dump_despawn_after, DespawnAfter};
+use crate::scenarios::scripted_demo::{dump_fuse, Fuse};
 
 fn load_position(
     v: serde_json::Value,
@@ -122,6 +123,11 @@ fn load_despawn_after(
     Ok(())
 }
 
+fn load_fuse(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<Fuse>(v)?);
+    Ok(())
+}
+
 pub fn components() -> ComponentRegistry {
     let mut registry = ComponentRegistry::new();
     registry.register("Position", load_position, dump_position);
@@ -134,6 +140,7 @@ pub fn components() -> ComponentRegistry {
     registry.register("RigidBody", load_rigid_body, dump_rigid_body);
     registry.register("Collider", load_collider, dump_collider);
     registry.register("DespawnAfter", load_despawn_after, dump_despawn_after);
+    registry.register("Fuse", load_fuse, dump_fuse);
     registry
 }
 

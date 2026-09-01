@@ -1,0 +1,40 @@
+[meta]
+dt = 0.016666667
+
+[[entity]]
+name = "collector"
+
+[entity.components.Position]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[entity.components.Script]
+path = "tests/fixtures/scripts/collector.lua"
+function = "collect"
+
+[[entity]]
+name = "pickup-near"
+
+[entity.components.Position]
+x = 0.5
+y = 0.0
+z = 0.0
+
+[[entity]]
+name = "pickup-far"
+
+[entity.components.Position]
+x = 10.0
+y = 0.0
+z = 0.0
+
+[[entity]]
+name = "fuse"
+
+[entity.components.Fuse]
+ticks_remaining = -1
+
+[entity.components.Script]
+path = "tests/fixtures/scripts/fuse.lua"
+function = "tick_fuse"
