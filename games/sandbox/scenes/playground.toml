@@ -4,7 +4,9 @@
 #
 # System order matters: "player_control" must run before "physics" — it sets
 # a pending force on the ball's rigid body that "physics" consumes and clears
-# every tick (see PhysicsState::apply_force's doc comment).
+# every tick (see PhysicsState::apply_force's doc comment). "camera_follow"
+# must run after "physics" so it reads the ball's post-physics position for
+# this tick, not last tick's.
 
 [[entity]]
 name = "ground"
@@ -119,8 +121,12 @@ name = "camera"
 position = [0.0, 9.0, 12.0]
 [entity.components.Camera]
 target = [0.0, 0.5, 0.0]
+[entity.components.CameraFollow]
+offset = [0.0, 6.0, 8.0]
 
 [[system]]
 name = "player_control"
 [[system]]
 name = "physics"
+[[system]]
+name = "camera_follow"

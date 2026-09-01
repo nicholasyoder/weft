@@ -15,6 +15,7 @@ path = "src/main.rs"
 engine-core = { path = "../../crates/engine-core" }
 engine-scene = { path = "../../crates/engine-scene" }
 engine-physics = { path = "../../crates/engine-physics" }
+engine-render = { path = "../../crates/engine-render" }
 engine-cli = { path = "../../crates/engine-cli" }
 glam.workspace = true
 serde.workspace = true

@@ -2816,6 +2816,7 @@ dependencies = [
  "engine-cli",
  "engine-core",
  "engine-physics",
+ "engine-render",
  "engine-scene",
  "glam 0.29.3",
  "hecs",
