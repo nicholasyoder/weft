@@ -1,0 +1,23 @@
+[package]
+name = "engine-mcp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "engine-mcp"
+path = "src/main.rs"
+
+[lib]
+name = "engine_mcp"
+path = "src/lib.rs"
+
+[dependencies]
+engine-cli = { path = "../engine-cli" }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process"] }
