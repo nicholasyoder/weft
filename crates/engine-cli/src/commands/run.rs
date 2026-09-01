@@ -4,10 +4,14 @@ use std::process::ExitCode;
 use crate::commands::OutputFormat;
 use crate::SimSource;
 
-pub fn run(scene: &Path, seed: u64, ticks: u64, format: OutputFormat) -> ExitCode {
+pub fn run(scene: &Path, seed: u64, ticks: u64, watch: bool, format: OutputFormat) -> ExitCode {
     if ticks == 0 {
         crate::diagnostics::CliError::invalid_ticks(ticks).print(format.is_json());
         return ExitCode::FAILURE;
+    }
+
+    if watch {
+        return crate::watch::run(scene, seed, ticks, format);
     }
 
     match crate::run_and_dump(SimSource::Scene(scene.to_path_buf()), seed, ticks) {

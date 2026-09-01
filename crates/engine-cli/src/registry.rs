@@ -7,6 +7,7 @@
 use engine_core::Transform;
 use engine_render::{Camera, Material, MeshRef};
 use engine_scene::{ComponentRegistry, SystemRegistry};
+use engine_script::Script;
 
 use crate::scenarios::basic::{dump_position, dump_velocity, movement_system, Position, Velocity};
 
@@ -75,6 +76,16 @@ fn dump_material(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value
         .map(|m| ("Material", serde_json::to_value((*m).clone()).unwrap()))
 }
 
+fn load_script(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<Script>(v)?);
+    Ok(())
+}
+
+fn dump_script(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&Script>()
+        .map(|s| ("Script", serde_json::to_value((*s).clone()).unwrap()))
+}
+
 pub fn components() -> ComponentRegistry {
     let mut registry = ComponentRegistry::new();
     registry.register("Position", load_position, dump_position);
@@ -83,6 +94,7 @@ pub fn components() -> ComponentRegistry {
     registry.register("Camera", load_camera, dump_camera);
     registry.register("MeshRef", load_mesh_ref, dump_mesh_ref);
     registry.register("Material", load_material, dump_material);
+    registry.register("Script", load_script, dump_script);
     registry
 }
 

@@ -27,13 +27,17 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
-    /// Load a scene file, run it for N ticks, and exit.
+    /// Load a scene file, run it for N ticks, and exit. With --watch,
+    /// instead reruns the same budget from scratch whenever the scene file
+    /// or a referenced Lua script changes, until the process is killed.
     Run {
         scene: PathBuf,
         #[arg(long, default_value_t = 1)]
         seed: u64,
         #[arg(long, default_value_t = 60)]
         ticks: u64,
+        #[arg(long)]
+        watch: bool,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -117,8 +121,9 @@ fn main() -> ExitCode {
             scene,
             seed,
             ticks,
+            watch,
             format,
-        } => commands::run::run(&scene, seed, ticks, format),
+        } => commands::run::run(&scene, seed, ticks, watch, format),
         Command::Render {
             scene,
             to,

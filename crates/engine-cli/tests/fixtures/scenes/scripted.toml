@@ -1,0 +1,14 @@
+[meta]
+dt = 0.016666667
+
+[[entity]]
+name = "scripted-mover"
+
+[entity.components.Position]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[entity.components.Script]
+path = "tests/fixtures/scripts/increment_x.lua"
+function = "on_tick"

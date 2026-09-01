@@ -3,6 +3,7 @@ use engine_cli::{DeterminismResult, SimSource};
 
 const BASIC_SCENE: &str = "tests/fixtures/scenes/basic.toml";
 const BASIC_SCENE_MODIFIED: &str = "tests/fixtures/scenes/basic_modified.toml";
+const SCRIPTED_SCENE: &str = "tests/fixtures/scenes/scripted.toml";
 
 #[test]
 fn scene_loads_and_runs_with_scene_name_and_component_fields() {
@@ -103,6 +104,28 @@ fn cli_test_subcommand_supports_scene_flag() {
         .assert()
         .success()
         .stdout(predicates::str::contains("\"status\":\"pass\""));
+}
+
+/// A `Script`-tagged entity's component gets updated by its Lua function
+/// every tick, and the resulting run is still byte-identical across two
+/// runs with the same seed — Lua-driven state is deterministic under the
+/// same harness that already proves it for native systems.
+#[test]
+fn scripted_entity_updates_component_and_stays_deterministic() {
+    let json = engine_cli::run_and_dump(SimSource::Scene(SCRIPTED_SCENE.into()), 1, 5).unwrap();
+    let entities = json["entities"].as_array().unwrap();
+    let mover = entities
+        .iter()
+        .find(|e| e["components"]["SceneName"] == "scripted-mover")
+        .unwrap();
+    assert_eq!(mover["components"]["Position"]["x"], 5.0);
+
+    assert!(engine_cli::verify_scenario_determinism(
+        SimSource::Scene(SCRIPTED_SCENE.into()),
+        7,
+        20
+    )
+    .is_ok());
 }
 
 #[test]

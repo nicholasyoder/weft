@@ -27,7 +27,9 @@ impl ComponentRegistry {
         self
     }
 
-    pub(crate) fn loader(&self, name: &str) -> Option<ComponentLoader> {
+    /// Looks up a component's loader by the name scene files (and, per
+    /// ADR-0006, Lua scripts writing values back) reference it by.
+    pub fn loader(&self, name: &str) -> Option<ComponentLoader> {
         self.entries
             .iter()
             .find(|(n, _, _)| *n == name)

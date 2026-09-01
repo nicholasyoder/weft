@@ -79,6 +79,10 @@ impl CliError {
         Self::new(source.code(), source.to_string())
     }
 
+    pub fn from_script_error(source: &engine_script::ScriptError) -> Self {
+        Self::new(source.code(), source.to_string())
+    }
+
     pub fn unsupported_import_extension(path: &std::path::Path, extension: &str) -> Self {
         Self::new(
             "IMPORT_UNSUPPORTED_EXTENSION",

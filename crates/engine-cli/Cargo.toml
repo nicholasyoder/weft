@@ -16,12 +16,15 @@ engine-core = { path = "../engine-core" }
 engine-scene = { path = "../engine-scene" }
 engine-assets = { path = "../engine-assets" }
 engine-render = { path = "../engine-render" }
+engine-script = { path = "../engine-script" }
 hecs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
 clap.workspace = true
 thiserror.workspace = true
+notify.workspace = true
+notify-debouncer-mini.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

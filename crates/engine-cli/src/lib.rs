@@ -3,12 +3,15 @@ pub mod diagnostics;
 pub mod recording;
 pub mod registry;
 pub mod scenarios;
+pub mod watch;
 
 use std::path::PathBuf;
 
 use diagnostics::CliError;
 use engine_core::inspect::ComponentDumper;
 use engine_core::sim::Sim;
+use engine_scene::ComponentRegistry;
+use engine_script::{DispatchCtx, Script, ScriptHost};
 
 /// Where a `Sim` comes from: a hardcoded Rust scenario (Phase 0) or a
 /// text scene file (Phase 1). Every CLI command that runs a simulation
@@ -54,6 +57,65 @@ impl SimSource {
             }
         }
     }
+
+    /// Like `build`, but also scans the built world for `Script` components
+    /// (per ADR-0006) and — if any are found — loads a `ScriptHost` with
+    /// every distinct referenced `.lua` file. Scenes/scenarios with no
+    /// `Script` components pay nothing extra: `host` comes back `None`.
+    fn build_with_scripts(
+        &self,
+        seed: u64,
+    ) -> Result<(Sim, Vec<ComponentDumper>, Option<ScriptHost>), CliError> {
+        let (sim, dumpers) = self.build(seed)?;
+
+        let mut paths: Vec<String> = sim
+            .world
+            .query::<&Script>()
+            .iter()
+            .map(|(_, s)| s.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return Ok((sim, dumpers, None));
+        }
+        paths.sort();
+        paths.dedup();
+
+        let mut host = ScriptHost::new().map_err(|e| CliError::from_script_error(&e))?;
+        for path in &paths {
+            host.load_file(path.as_ref())
+                .map_err(|e| CliError::from_script_error(&e))?;
+        }
+        Ok((sim, dumpers, Some(host)))
+    }
+}
+
+/// Advances `sim` by one tick, then — if `host` is present — dispatches
+/// every `Script`-tagged entity's function once. The first dispatch error
+/// (if any) becomes a hard `CliError`, the same failure posture as any other
+/// bad scene: `test`/`run`/`replay` are meant to fail loudly, not limp on
+/// with partially-applied script output. `watch` mode (see `watch.rs`)
+/// handles the "don't crash on a bad edit" requirement at a different
+/// layer, by catching this `Err` per rerun instead of suppressing it here.
+fn step_and_dispatch(
+    sim: &mut Sim,
+    dumpers: &[ComponentDumper],
+    host: Option<&mut ScriptHost>,
+    components: &ComponentRegistry,
+) -> Result<(), CliError> {
+    sim.step();
+    if let Some(host) = host {
+        let errors = host.dispatch(DispatchCtx {
+            world: &mut sim.world,
+            components,
+            dumpers,
+            tick: sim.tick,
+            dt: sim.dt,
+        });
+        if let Some((_, e)) = errors.into_iter().next() {
+            return Err(CliError::from_script_error(&e));
+        }
+    }
+    Ok(())
 }
 
 /// Builds `source` into a live `Sim` without dumping it to JSON — what
@@ -72,11 +134,29 @@ pub fn run_and_dump(
     seed: u64,
     ticks: u64,
 ) -> Result<serde_json::Value, CliError> {
-    let (mut sim, dumpers) = source.into().build(seed)?;
-    sim.run(ticks);
-    Ok(engine_core::inspect::world_to_json(
-        &sim.world, sim.tick, seed, &dumpers,
-    ))
+    run_and_dump_with_script_paths(source, seed, ticks).map(|(json, _)| json)
+}
+
+/// Like `run_and_dump`, but also returns every distinct `.lua` script path
+/// loaded along the way (not the scene path itself — callers already have
+/// that). Lets `watch` build its file-watch set without building the `Sim`
+/// a second time just to ask what scripts it used.
+pub(crate) fn run_and_dump_with_script_paths(
+    source: impl Into<SimSource>,
+    seed: u64,
+    ticks: u64,
+) -> Result<(serde_json::Value, Vec<PathBuf>), CliError> {
+    let (mut sim, dumpers, mut host) = source.into().build_with_scripts(seed)?;
+    let components = registry::components();
+    for _ in 0..ticks {
+        step_and_dispatch(&mut sim, &dumpers, host.as_mut(), &components)?;
+    }
+    let script_paths = host
+        .as_ref()
+        .map(|h| h.loaded_paths().map(PathBuf::from).collect())
+        .unwrap_or_default();
+    let json = engine_core::inspect::world_to_json(&sim.world, sim.tick, seed, &dumpers);
+    Ok((json, script_paths))
 }
 
 /// Runs `source` for `ticks` ticks, dumping a snapshot every `dump_every`
@@ -88,10 +168,11 @@ pub fn run_and_dump_snapshots(
     ticks: u64,
     dump_every: u64,
 ) -> Result<Vec<serde_json::Value>, CliError> {
-    let (mut sim, dumpers) = source.into().build(seed)?;
+    let (mut sim, dumpers, mut host) = source.into().build_with_scripts(seed)?;
+    let components = registry::components();
     let mut snapshots = Vec::new();
     for t in 1..=ticks {
-        sim.step();
+        step_and_dispatch(&mut sim, &dumpers, host.as_mut(), &components)?;
         if t % dump_every == 0 || t == ticks {
             snapshots.push(engine_core::inspect::world_to_json(
                 &sim.world, sim.tick, seed, &dumpers,
