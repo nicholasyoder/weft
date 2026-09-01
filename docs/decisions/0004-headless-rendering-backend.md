@@ -5,7 +5,7 @@
 
 ## Context
 
-Phase 2 (see [ROADMAP.md](../../ROADMAP.md)) requires `engine render` to produce a correct PNG "with no window/display server present," verified explicitly rather than assumed. The development sandbox this was implemented in has no real GPU driver, no Vulkan ICD, and no `$DISPLAY` — a real instance of exactly the environment the roadmap worries about, not a hypothetical. Two decisions followed directly from that: how to get *any* working GPU backend in such an environment, and how to keep pixel output reproducible once one exists.
+Phase 2 (see [ROADMAP.md](../roadmap/completed-phases.md)) requires `engine render` to produce a correct PNG "with no window/display server present," verified explicitly rather than assumed. The development sandbox this was implemented in has no real GPU driver, no Vulkan ICD, and no `$DISPLAY` — a real instance of exactly the environment the roadmap worries about, not a hypothetical. Two decisions followed directly from that: how to get *any* working GPU backend in such an environment, and how to keep pixel output reproducible once one exists.
 
 ## Decision
 

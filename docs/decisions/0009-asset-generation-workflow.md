@@ -5,7 +5,7 @@
 
 ## Context
 
-[ROADMAP.md](../../ROADMAP.md) Phase 7 originally proposed wiring Meshy/Tripo3D's paid REST APIs directly into `engine import`. The user rejected that shape outright: asset generation is a different concern from the engine itself, and the engine should carry no hardcoded external API dependency. Separately, the user wants human-authored art to work identically to any generated content — nothing should assume everything comes from an AI pipeline.
+[ROADMAP.md](../roadmap/completed-phases.md) Phase 7 originally proposed wiring Meshy/Tripo3D's paid REST APIs directly into `engine import`. The user rejected that shape outright: asset generation is a different concern from the engine itself, and the engine should carry no hardcoded external API dependency. Separately, the user wants human-authored art to work identically to any generated content — nothing should assume everything comes from an AI pipeline.
 
 Phase 3 ([ADR-0005](0005-asset-pipeline.md)) already built `engine import <file>` as fully source-agnostic: it content-addresses any glTF/image file regardless of where it came from. This ADR is about what produces that file, which is deliberately *not* an engine concern — but it's still worth a decision, since "just don't hardcode it" leaves open what to actually recommend and prototype.
 

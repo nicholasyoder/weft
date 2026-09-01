@@ -5,7 +5,7 @@
 
 ## Context
 
-Phase 1 (see [ROADMAP.md](../../ROADMAP.md)) replaces Phase 0's hardcoded-in-Rust scenarios with scenes authored as plain text, per the "text, diffable, git-mergeable" thesis in [research/03, §1](../../research/03-design-principles-for-agent-native-engines.md#1-scene-and-asset-data-formats-text-diffable-git-mergeable). Two forks in the road needed a decision: the concrete text format, and how a generic scene loader can spawn game-specific component types (`Position`, `Velocity`, ...) it has no compile-time knowledge of.
+Phase 1 (see [ROADMAP.md](../roadmap/completed-phases.md)) replaces Phase 0's hardcoded-in-Rust scenarios with scenes authored as plain text, per the "text, diffable, git-mergeable" thesis in [research/03, §1](../../research/03-design-principles-for-agent-native-engines.md#1-scene-and-asset-data-formats-text-diffable-git-mergeable). Two forks in the road needed a decision: the concrete text format, and how a generic scene loader can spawn game-specific component types (`Position`, `Velocity`, ...) it has no compile-time knowledge of.
 
 ## Decision
 

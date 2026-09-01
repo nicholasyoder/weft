@@ -10,13 +10,17 @@ This project starts from the opposite assumption: every operation should be doab
 
 ## Status
 
-Phase 0 (deterministic core loop) is done: a Cargo workspace with `engine-core` (hecs-backed ECS, fixed-timestep scheduler, seeded `ChaCha8Rng`) and `engine-cli` (the `engine` binary — `test`/`inspect`/`replay` subcommands, `--format json`) exists under `crates/`, with a green `cargo test --workspace` suite proving byte-identical determinism across runs and catching a deliberately-introduced ambient-RNG regression. Language, scope, and build-vs-wrap decisions are locked (Rust, 3D from day one, built from scratch on focused libraries — see [ADR-0001](docs/decisions/0001-rust-3d-from-scratch.md)); RNG-algorithm and ECS-iteration-order determinism policy are in [ADR-0002](docs/decisions/0002-deterministic-rng-and-hecs-iteration-order.md). The phased build plan lives in [ROADMAP.md](ROADMAP.md). **The roadmap is explicitly a living document** — every phase boundary is a checkpoint to reconsider the architecture as real constraints show up, not a fixed spec.
+Phases 0–8 are done or partially done: a deterministic ECS core (`engine-core`), a text scene format (`engine-scene`), headless-first `wgpu` rendering with live windowed play (`engine-render`), a content-addressed glTF/image asset pipeline (`engine-assets`), Lua scripting with hot-reload (`engine-script`), `rapier3d` physics (`engine-physics`), a CLI and MCP server exposing all of it (`engine-cli`, `engine-mcp`), and a first real test game (`games/sandbox` — WASD rolls a ball around a walled physics playground with imported assets and a camera that follows it). The full build log is [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md).
+
+A 2026-09-01 capability audit weighed the engine as it stands against what a fully realized game — realistic graphics, audio, animation, UI, everything a shipped game needs — actually requires, and found the deterministic core solid but nearly everything a player would see, hear, or feel still ahead: no audio, no animation, no text/UI rendering, flat-shaded single-light graphics with no shadows, and a physics layer with no triggers, raycasts, or character controller, among others. That work is organized into four priority tiers in [ROADMAP.md](ROADMAP.md). **The roadmap — phases and tiers alike — is explicitly a living document**, and the tiers are a suggested order, not a queue: every boundary is a checkpoint to reconsider the plan as real constraints show up, never a fixed spec to build against on faith.
+
+Language, scope, and build-vs-wrap decisions are locked (Rust, 3D from day one, built from scratch on focused libraries — see [ADR-0001](docs/decisions/0001-rust-3d-from-scratch.md)); RNG-algorithm and ECS-iteration-order determinism policy are in [ADR-0002](docs/decisions/0002-deterministic-rng-and-hecs-iteration-order.md).
 
 ## Where to start
 
-- [ROADMAP.md](ROADMAP.md) — the phased development plan, current status, and the practice for revisiting decisions as we go.
+- [ROADMAP.md](ROADMAP.md) — ground rules, workspace layout, and how the roadmap is organized: completed-phase history plus the four forward-looking capability tiers, all under [`docs/roadmap/`](docs/roadmap/).
 - [`docs/decisions/`](docs/decisions/) — ADRs recording why a decision was made and what would change it.
-- [`research/`](research/) — the original research and architecture proposal that the roadmap is built on.
+- [`research/`](research/) — the original research and architecture proposal the early roadmap was built on.
 
 ## Research index
 

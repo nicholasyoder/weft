@@ -22,7 +22,7 @@
 ## Consequences
 
 - Slower time-to-first-working-loop than wrapping an existing engine, in exchange for no inherited architectural constraints.
-- Early milestones (Phase 0–2 in [ROADMAP.md](../../ROADMAP.md)) will front-load renderer and scene-format work that a 2D-first or wrap-based approach could have deferred or skipped.
+- Early milestones (Phase 0–2 in [ROADMAP.md](../roadmap/completed-phases.md)) will front-load renderer and scene-format work that a 2D-first or wrap-based approach could have deferred or skipped.
 - Full ownership of the text scene format, ECS integration, and rendering pipeline — nothing here is dictated by an upstream engine's release cycle or design opinions.
 
 ## Revisit when

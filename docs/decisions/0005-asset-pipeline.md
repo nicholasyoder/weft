@@ -5,7 +5,7 @@
 
 ## Context
 
-Phase 3 (see [ROADMAP.md](../../ROADMAP.md)) replaces Phase 2's hardcoded cube/plane with real content: a binary asset store and glTF import, ready for the generative-asset APIs Phase 7 will eventually wire in (Meshy/Tripo3D also export glTF). The DoD is concrete — a glTF file imports and renders correctly via `engine render`, and re-importing the same file produces the same content hash with no spurious diff/churn — which forces two decisions: how assets are stored/addressed, and how much of glTF's surface is worth importing on day one.
+Phase 3 (see [ROADMAP.md](../roadmap/completed-phases.md)) replaces Phase 2's hardcoded cube/plane with real content: a binary asset store and glTF import, ready for the generative-asset APIs Phase 7 will eventually wire in (Meshy/Tripo3D also export glTF). The DoD is concrete — a glTF file imports and renders correctly via `engine render`, and re-importing the same file produces the same content hash with no spurious diff/churn — which forces two decisions: how assets are stored/addressed, and how much of glTF's surface is worth importing on day one.
 
 ## Decision
 

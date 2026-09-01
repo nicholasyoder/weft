@@ -13,7 +13,7 @@ Two equivalent surfaces exist, both thin wrappers over the same `engine_cli` lib
 cargo build --workspace
 ```
 
-`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all -- --check` must all stay clean — every phase in `ROADMAP.md` has held to this gate.
+`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all -- --check` must all stay clean — every phase in [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) has held to this gate.
 
 ## The six operations
 

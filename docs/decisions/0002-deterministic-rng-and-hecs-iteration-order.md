@@ -5,7 +5,7 @@
 
 ## Context
 
-Phase 0 (see [ROADMAP.md](../../ROADMAP.md)) requires "same seed → byte-identical world state, forever" as a hard, non-retrofittable constraint. Two implementation choices directly threaten that guarantee if made carelessly:
+Phase 0 (see [ROADMAP.md](../roadmap/completed-phases.md)) requires "same seed → byte-identical world state, forever" as a hard, non-retrofittable constraint. Two implementation choices directly threaten that guarantee if made carelessly:
 
 1. Which PRNG algorithm backs the engine's single seeded RNG resource.
 2. Whether anything observable (JSON world dumps, snapshot tests) may depend on `hecs`'s internal entity storage order.

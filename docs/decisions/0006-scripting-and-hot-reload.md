@@ -5,7 +5,7 @@
 
 ## Context
 
-Phase 4 (see [ROADMAP.md](../../ROADMAP.md)) closes the edit-run-observe loop: editing a scene file or a Lua content script while `engine run` is active should take effect without restarting the process, and gameplay *systems* stay native Rust while Lua is scoped to low-stakes content (dialogue/quest/tuning), per ADR-0003's own forward reference. This forces several concrete decisions: where scripting logic plugs into the existing `engine-core`/`engine-scene`/`engine-cli` layering, how much of Lua's ambient capability (I/O, randomness) is safe to expose without quietly reintroducing the nondeterminism Phase 0 spent its whole budget eliminating, what "hot-reload" actually preserves across an edit, and how far to chase the roadmap's own flagged high-risk item (native Rust hot-reload).
+Phase 4 (see [ROADMAP.md](../roadmap/completed-phases.md)) closes the edit-run-observe loop: editing a scene file or a Lua content script while `engine run` is active should take effect without restarting the process, and gameplay *systems* stay native Rust while Lua is scoped to low-stakes content (dialogue/quest/tuning), per ADR-0003's own forward reference. This forces several concrete decisions: where scripting logic plugs into the existing `engine-core`/`engine-scene`/`engine-cli` layering, how much of Lua's ambient capability (I/O, randomness) is safe to expose without quietly reintroducing the nondeterminism Phase 0 spent its whole budget eliminating, what "hot-reload" actually preserves across an edit, and how far to chase the roadmap's own flagged high-risk item (native Rust hot-reload).
 
 ## Decision
 

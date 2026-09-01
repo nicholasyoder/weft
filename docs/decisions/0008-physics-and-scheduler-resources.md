@@ -5,7 +5,7 @@
 
 ## Context
 
-[ROADMAP.md](../../ROADMAP.md) Phase 6 integrates `rapier3d` behind engine-native component/system types. Every phase through Phase 5 built systems that are stateless between ticks: `type System = fn(&mut SystemArgs)` is a bare fn pointer, and `SystemArgs` (`engine-core/src/scheduler.rs`) carries only `world`, `rng`, `tick`, `dt`. `Sim` (`engine-core/src/sim.rs`) special-cases exactly two pieces of cross-tick state: the ECS `world` itself and the seeded `rng`.
+[ROADMAP.md](../roadmap/completed-phases.md) Phase 6 integrates `rapier3d` behind engine-native component/system types. Every phase through Phase 5 built systems that are stateless between ticks: `type System = fn(&mut SystemArgs)` is a bare fn pointer, and `SystemArgs` (`engine-core/src/scheduler.rs`) carries only `world`, `rng`, `tick`, `dt`. `Sim` (`engine-core/src/sim.rs`) special-cases exactly two pieces of cross-tick state: the ECS `world` itself and the seeded `rng`.
 
 Physics genuinely needs a third kind of cross-tick state that doesn't fit either: rapier's own `RigidBodySet`/`ColliderSet`/`PhysicsPipeline`/`IslandManager`/`BroadPhase`/`NarrowPhase`/`CCDSolver`, plus a `hecs::Entity` → `RigidBodyHandle` map. This isn't ECS data (scene files/agents should never see or author it directly) and it isn't a single well-known singleton like `rng` — it needs to persist across ticks *within one `Sim`'s lifetime* so rapier's contact/sleep state and body velocities aren't lost every tick. A grep across `engine-core/src` confirmed no existing extension point covers this.
 
