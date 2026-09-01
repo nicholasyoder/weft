@@ -1,8 +1,10 @@
+use crate::resources::Resources;
 use crate::rng::EngineRng;
 
 pub struct SystemArgs<'a> {
     pub world: &'a mut hecs::World,
     pub rng: &'a mut EngineRng,
+    pub resources: &'a mut Resources,
     pub tick: u64,
     pub dt: f32,
 }
@@ -24,11 +26,19 @@ impl Scheduler {
         self
     }
 
-    pub fn tick(&mut self, world: &mut hecs::World, rng: &mut EngineRng, tick: u64, dt: f32) {
+    pub fn tick(
+        &mut self,
+        world: &mut hecs::World,
+        rng: &mut EngineRng,
+        resources: &mut Resources,
+        tick: u64,
+        dt: f32,
+    ) {
         for (_name, sys) in &self.systems {
             let mut args = SystemArgs {
                 world,
                 rng,
+                resources,
                 tick,
                 dt,
             };
@@ -63,11 +73,12 @@ mod tests {
         let mut world = hecs::World::new();
         let entity = world.spawn((Marker(0.0),));
         let mut rng = rng::seeded(0);
+        let mut resources = Resources::new();
         let mut scheduler = Scheduler::new();
         scheduler
             .add_system("set_to_one", set_to_one)
             .add_system("double", double);
-        scheduler.tick(&mut world, &mut rng, 0, 1.0 / 60.0);
+        scheduler.tick(&mut world, &mut rng, &mut resources, 0, 1.0 / 60.0);
 
         assert_eq!(world.get::<&Marker>(entity).unwrap().0, 2.0);
     }
@@ -76,8 +87,9 @@ mod tests {
     fn tick_with_noop_system_does_not_panic() {
         let mut world = hecs::World::new();
         let mut rng = rng::seeded(0);
+        let mut resources = Resources::new();
         let mut scheduler = Scheduler::new();
         scheduler.add_system("noop", noop_system);
-        scheduler.tick(&mut world, &mut rng, 5, 1.0 / 60.0);
+        scheduler.tick(&mut world, &mut rng, &mut resources, 5, 1.0 / 60.0);
     }
 }

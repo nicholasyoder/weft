@@ -1,9 +1,11 @@
+use crate::resources::Resources;
 use crate::rng::{self, EngineRng};
 use crate::scheduler::Scheduler;
 
 pub struct Sim {
     pub world: hecs::World,
     pub rng: EngineRng,
+    pub resources: Resources,
     pub tick: u64,
     pub dt: f32,
     scheduler: Scheduler,
@@ -14,6 +16,7 @@ impl Sim {
         Self {
             world: hecs::World::new(),
             rng: rng::seeded(seed),
+            resources: Resources::new(),
             tick: 0,
             dt,
             scheduler: Scheduler::new(),
@@ -25,8 +28,13 @@ impl Sim {
     }
 
     pub fn step(&mut self) {
-        self.scheduler
-            .tick(&mut self.world, &mut self.rng, self.tick, self.dt);
+        self.scheduler.tick(
+            &mut self.world,
+            &mut self.rng,
+            &mut self.resources,
+            self.tick,
+            self.dt,
+        );
         self.tick += 1;
     }
 
