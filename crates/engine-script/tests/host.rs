@@ -309,3 +309,63 @@ end
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn two_scripts_with_the_same_function_name_do_not_collide() {
+    // Regression test for the bug ADR-0012 surfaced but didn't fix: before
+    // per-script environments (ADR-0012's follow-up), two loaded scripts
+    // both defining `on_tick` collided in the shared Lua globals table —
+    // the second-loaded script's function silently overwrote the first's,
+    // so the first entity ran the *wrong* script's logic.
+    let dir =
+        std::env::temp_dir().join(format!("engine-script-test-collide-{}", std::process::id()));
+    let path_a = write_script(
+        &dir,
+        "a.lua",
+        "function on_tick(components, tick, dt)\n  return { Counter = { value = 111 } }\nend\n",
+    );
+    let path_b = write_script(
+        &dir,
+        "b.lua",
+        "function on_tick(components, tick, dt)\n  return { Counter = { value = 222 } }\nend\n",
+    );
+
+    let mut world = hecs::World::new();
+    let entity_a = world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path_a.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+    ));
+    let entity_b = world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path_b.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+    ));
+
+    let registry = registry();
+    let mut host = ScriptHost::new().unwrap();
+    // Load b.lua *after* a.lua: under the old shared-globals design this
+    // ordering is exactly what made b's `on_tick` overwrite a's.
+    host.load_file(&path_a).unwrap();
+    host.load_file(&path_b).unwrap();
+    let mut rng = engine_core::rng::seeded(1);
+    let errors = dispatch_once(&mut world, &registry, &mut rng, &mut host, 0);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+
+    assert_eq!(
+        world.get::<&Counter>(entity_a).unwrap().value,
+        111,
+        "entity_a should run a.lua's on_tick, not b.lua's"
+    );
+    assert_eq!(
+        world.get::<&Counter>(entity_b).unwrap().value,
+        222,
+        "entity_b should run b.lua's on_tick, not a.lua's"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

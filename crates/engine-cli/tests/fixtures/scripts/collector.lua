@@ -1,6 +1,6 @@
 -- ADR-0012 demo: uses engine.query to see every other entity with a
 -- Position, and engine.despawn(id) to remove any close enough to "collect".
-function collect(components, tick, dt, self_id)
+function on_tick(components, tick, dt, self_id)
     local nearby = engine.query({ "Position" })
     local cx = components.Position.x
     local cy = components.Position.y

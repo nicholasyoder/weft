@@ -14,12 +14,14 @@ use crate::types::Script;
 const NO_RANDOM_MESSAGE: &str =
     "math.random/math.randomseed are disabled: scripts have no RNG access yet (see ADR-0006). Use engine.random/engine.random_int instead (see ADR-0012).";
 
-/// Owns a sandboxed Lua VM and the set of loaded content-script files, and
-/// dispatches per-tick calls into `Script`-tagged entities. See ADR-0006 for
-/// why this lives outside `engine-core`/`engine-scene` entirely.
+/// Owns a sandboxed Lua VM and one private environment table per loaded
+/// script file, and dispatches per-tick calls into `Script`-tagged
+/// entities. See ADR-0006 for why this lives outside
+/// `engine-core`/`engine-scene` entirely, and ADR-0012 for why each script
+/// gets its own environment rather than sharing the real Lua globals.
 pub struct ScriptHost {
     lua: Lua,
-    loaded: HashMap<PathBuf, ()>,
+    environments: HashMap<PathBuf, mlua::Table>,
 }
 
 impl ScriptHost {
@@ -33,35 +35,46 @@ impl ScriptHost {
         disable_ambient_randomness(&lua)?;
         Ok(Self {
             lua,
-            loaded: HashMap::new(),
+            environments: HashMap::new(),
         })
     }
 
-    /// Loads (or reloads) the Lua chunk at `path`, defining its top-level
-    /// functions as globals. Idempotent: reloading the same path re-executes
-    /// the chunk, replacing any globals it (re)defines.
+    /// Loads (or reloads) the Lua chunk at `path` into its own private
+    /// environment table (ADR-0012) — top-level function/variable
+    /// definitions land there, not in the real Lua globals, so two scripts
+    /// naming a function the same never collide. Reads for anything the
+    /// chunk hasn't defined itself (the standard library, and the
+    /// per-dispatch `engine.*` table `dispatch_one` injects) fall through
+    /// live to the real globals via a metatable `__index`. Idempotent:
+    /// reloading the same path builds a brand new environment and replaces
+    /// the old one wholesale, so a removed function doesn't linger.
     pub fn load_file(&mut self, path: &Path) -> Result<(), ScriptError> {
         let path_str = path.display().to_string();
         let src = std::fs::read_to_string(path).map_err(|e| ScriptError::ReadFailed {
             path: path_str.clone(),
             source: e,
         })?;
+        let env = new_script_environment(&self.lua).map_err(|e| ScriptError::LoadFailed {
+            path: path_str.clone(),
+            source: e,
+        })?;
         self.lua
             .load(&src)
             .set_name(&path_str)
+            .set_environment(env.clone())
             .exec()
             .map_err(|e| ScriptError::LoadFailed {
                 path: path_str.clone(),
                 source: e,
             })?;
-        self.loaded.insert(path.to_path_buf(), ());
+        self.environments.insert(path.to_path_buf(), env);
         Ok(())
     }
 
     /// Distinct script file paths loaded so far, for the CLI's file watcher
     /// to build its watch set from.
     pub fn loaded_paths(&self) -> impl Iterator<Item = &Path> {
-        self.loaded.keys().map(PathBuf::as_path)
+        self.environments.keys().map(PathBuf::as_path)
     }
 
     /// Calls every `Script`-tagged entity's named function once, in a
@@ -109,10 +122,15 @@ impl ScriptHost {
             serde_json::Value::Object(dump_entity(&entity_ref, ctx.dumpers))
         };
 
+        let env = self
+            .environments
+            .get(Path::new(script.path.as_str()))
+            .ok_or_else(|| ScriptError::UnknownFunction {
+                path: script.path.clone(),
+                function: script.function.clone(),
+            })?;
         let func: mlua::Function =
-            self.lua
-                .globals()
-                .get(script.function.as_str())
+            env.get(script.function.as_str())
                 .map_err(|_| ScriptError::UnknownFunction {
                     path: script.path.clone(),
                     function: script.function.clone(),
@@ -304,6 +322,19 @@ pub struct DispatchCtx<'w, 'd, 'r> {
     pub rng: &'r mut EngineRng,
     pub tick: u64,
     pub dt: f32,
+}
+
+/// Builds a fresh, private table for one script's `_ENV` (ADR-0012): reads
+/// for anything not defined on the table itself fall through, live, to the
+/// real Lua globals (`__index`); writes (a top-level `function foo()`, or
+/// an implicit-global assignment) land only on this table, invisible to any
+/// other script.
+fn new_script_environment(lua: &Lua) -> mlua::Result<mlua::Table> {
+    let env = lua.create_table()?;
+    let metatable = lua.create_table()?;
+    metatable.set("__index", lua.globals())?;
+    env.set_metatable(Some(metatable))?;
+    Ok(env)
 }
 
 fn disable_ambient_randomness(lua: &Lua) -> Result<(), ScriptError> {
