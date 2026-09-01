@@ -1,38 +1,14 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use engine_assets::AssetStore;
-
 use crate::commands::OutputFormat;
 use crate::diagnostics::CliError;
 
 pub fn run(input: &Path, assets_dir: &Path, out: Option<&Path>, format: OutputFormat) -> ExitCode {
-    let store = AssetStore::new(assets_dir);
-    let extension = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    let fragment = match extension.as_str() {
-        "gltf" | "glb" => match engine_assets::import_gltf(input, &store) {
-            Ok(imported) => gltf_fragment(&imported),
-            Err(e) => {
-                CliError::from_asset_error(&e).print(format.is_json());
-                return ExitCode::FAILURE;
-            }
-        },
-        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tga" | "webp" => {
-            match engine_assets::import_texture(input, &store) {
-                Ok(hash) => texture_fragment(&hash),
-                Err(e) => {
-                    CliError::from_asset_error(&e).print(format.is_json());
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-        other => {
-            CliError::unsupported_import_extension(input, other).print(format.is_json());
+    let fragment = match crate::import_asset(input, assets_dir) {
+        Ok(result) => result.fragment,
+        Err(e) => {
+            e.print(format.is_json());
             return ExitCode::FAILURE;
         }
     };
@@ -63,7 +39,7 @@ pub fn run(input: &Path, assets_dir: &Path, out: Option<&Path>, format: OutputFo
     ExitCode::SUCCESS
 }
 
-fn gltf_fragment(imported: &engine_assets::ImportedAsset) -> String {
+pub(crate) fn gltf_fragment(imported: &engine_assets::ImportedAsset) -> String {
     let mut fragment = String::new();
     fragment.push_str("[[entity]]\nname = \"imported\"\n\n");
     fragment.push_str("[entity.components.Transform]\nposition = [0.0, 0.0, 0.0]\n\n");
@@ -81,7 +57,7 @@ fn gltf_fragment(imported: &engine_assets::ImportedAsset) -> String {
     fragment
 }
 
-fn texture_fragment(hash: &str) -> String {
+pub(crate) fn texture_fragment(hash: &str) -> String {
     format!(
         "# Paste into an existing entity's [entity.components.Material] block:\ntexture = \"{hash}\"\n"
     )

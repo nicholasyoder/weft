@@ -1,0 +1,31 @@
+[[entity]]
+name = "camera-a"
+
+[entity.components.Transform]
+position = [2.5, 2.0, 4.0]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "camera-b"
+
+[entity.components.Transform]
+position = [-2.5, 2.0, 4.0]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "cube"
+
+[entity.components.Transform]
+position = [0.0, 0.5, 0.0]
+
+[entity.components.MeshRef]
+mesh = "cube"
+
+[entity.components.Material]
+color = [0.8, 0.25, 0.2]

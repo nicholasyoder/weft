@@ -2,7 +2,6 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use crate::commands::OutputFormat;
-use crate::SimSource;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -20,16 +19,7 @@ pub fn run(
         return ExitCode::FAILURE;
     }
 
-    let mut sim = match crate::build_sim(SimSource::Scene(scene.to_path_buf()), seed) {
-        Ok(sim) => sim,
-        Err(e) => {
-            e.print(format.is_json());
-            return ExitCode::FAILURE;
-        }
-    };
-    sim.run(ticks);
-
-    match engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to) {
+    match crate::render_scene(scene, seed, ticks, width, height, assets_dir, to) {
         Ok(()) => {
             if format.is_json() {
                 println!(
@@ -52,7 +42,7 @@ pub fn run(
             ExitCode::SUCCESS
         }
         Err(e) => {
-            crate::diagnostics::CliError::from_render_error(&e).print(format.is_json());
+            e.print(format.is_json());
             ExitCode::FAILURE
         }
     }

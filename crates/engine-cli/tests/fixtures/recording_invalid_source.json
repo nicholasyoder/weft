@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "scenario": "basic",
+  "scene": "tests/fixtures/scenes/basic.toml",
+  "seed": 1,
+  "ticks": 10
+}

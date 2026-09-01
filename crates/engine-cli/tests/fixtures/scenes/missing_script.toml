@@ -1,0 +1,11 @@
+[[entity]]
+name = "scripted-mover"
+
+[entity.components.Position]
+x = 0.0
+y = 0.0
+z = 0.0
+
+[entity.components.Script]
+path = "tests/fixtures/scripts/does-not-exist.lua"
+function = "on_tick"

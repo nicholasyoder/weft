@@ -5,7 +5,7 @@ pub mod registry;
 pub mod scenarios;
 pub mod watch;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use diagnostics::CliError;
 use engine_core::inspect::ComponentDumper;
@@ -180,6 +180,73 @@ pub fn run_and_dump_snapshots(
         }
     }
     Ok(snapshots)
+}
+
+/// Builds `scene`, runs it for `ticks` ticks, and renders the final world
+/// state to a `width`x`height` PNG at `to`. The one place scene build, run,
+/// and render are joined, so both the `engine render` CLI command and
+/// `engine-mcp`'s `render` tool share this path (see ADR-0007) rather than
+/// each re-implementing it.
+#[allow(clippy::too_many_arguments)]
+pub fn render_scene(
+    scene: &Path,
+    seed: u64,
+    ticks: u64,
+    width: u32,
+    height: u32,
+    assets_dir: &Path,
+    to: &Path,
+) -> Result<(), CliError> {
+    let mut sim = build_sim(SimSource::Scene(scene.to_path_buf()), seed)?;
+    sim.run(ticks);
+    engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to)
+        .map_err(|e| CliError::from_render_error(&e))
+}
+
+/// The result of importing one file into the content-addressed asset
+/// store: a pasteable scene-text-file fragment plus the content hash(es) it
+/// references, for a caller (an MCP tool, say) that wants the hashes
+/// directly rather than re-parsing them back out of `fragment`.
+pub struct ImportResult {
+    pub fragment: String,
+    pub mesh_hash: Option<String>,
+    pub texture_hash: Option<String>,
+}
+
+/// Converts `input` (a glTF file or a loose image file) into `assets_dir`'s
+/// content-addressed store and builds a pasteable scene-text-file fragment
+/// for it. The one place import + fragment-formatting are joined, so both
+/// the `engine import` CLI command and `engine-mcp`'s `import` tool share
+/// this path (see ADR-0007).
+pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, CliError> {
+    let store = engine_assets::AssetStore::new(assets_dir);
+    let extension = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    match extension.as_str() {
+        "gltf" | "glb" => {
+            let imported = engine_assets::import_gltf(input, &store)
+                .map_err(|e| CliError::from_asset_error(&e))?;
+            Ok(ImportResult {
+                fragment: commands::import::gltf_fragment(&imported),
+                mesh_hash: Some(imported.mesh_hash.clone()),
+                texture_hash: imported.texture_hash.clone(),
+            })
+        }
+        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tga" | "webp" => {
+            let hash = engine_assets::import_texture(input, &store)
+                .map_err(|e| CliError::from_asset_error(&e))?;
+            Ok(ImportResult {
+                fragment: commands::import::texture_fragment(&hash),
+                mesh_hash: None,
+                texture_hash: Some(hash),
+            })
+        }
+        other => Err(CliError::unsupported_import_extension(input, other)),
+    }
 }
 
 pub struct DeterminismFailure {
