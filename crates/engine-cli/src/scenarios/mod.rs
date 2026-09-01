@@ -1,5 +1,6 @@
 pub mod basic;
 pub mod broken_rng;
+pub mod physics_demo;
 
 use engine_core::inspect::ComponentDumper;
 use engine_core::sim::Sim;
@@ -20,6 +21,11 @@ pub const SCENARIOS: &[Scenario] = &[
         name: "broken-rng",
         build: broken_rng::build,
         dumpers: broken_rng::DUMPERS,
+    },
+    Scenario {
+        name: "physics-demo",
+        build: physics_demo::build,
+        dumpers: physics_demo::DUMPERS,
     },
 ];
 

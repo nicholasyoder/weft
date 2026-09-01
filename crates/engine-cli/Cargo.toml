@@ -16,8 +16,10 @@ engine-core = { path = "../engine-core" }
 engine-scene = { path = "../engine-scene" }
 engine-assets = { path = "../engine-assets" }
 engine-render = { path = "../engine-render" }
+engine-physics = { path = "../engine-physics" }
 engine-script = { path = "../engine-script" }
 hecs.workspace = true
+glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
