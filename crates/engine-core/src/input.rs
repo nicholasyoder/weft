@@ -1,16 +1,63 @@
 use std::collections::HashSet;
 
-/// A deliberately narrow set of keys — covers exactly what the first
-/// windowed/live milestone needs (WASD movement + escape-to-quit).
-/// Extended on demand, same scoping precedent as `ColliderShape`/`MeshKind`.
+/// A general-purpose keyboard key set — letters, digits, arrows, and the
+/// common control/modifier keys a real control scheme needs, not just the
+/// WASD+Space+Escape set the first windowed/live milestone got away with
+/// (see ADR-0010). Still a plain `engine-core` enum with no dependency on
+/// `winit` or any other windowing crate (see ADR-0013) — extended further
+/// on demand, same scoping precedent as `ColliderShape`/`MeshKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyCode {
-    W,
     A,
-    S,
+    B,
+    C,
     D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Digit0,
+    Digit1,
+    Digit2,
+    Digit3,
+    Digit4,
+    Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
+    Up,
+    Down,
+    Left,
+    Right,
     Space,
+    Enter,
+    Tab,
     Escape,
+    LeftShift,
+    RightShift,
+    LeftControl,
+    RightControl,
+    LeftAlt,
+    RightAlt,
 }
 
 /// Which keys are held as of the most recent live-loop poll. Not an ECS

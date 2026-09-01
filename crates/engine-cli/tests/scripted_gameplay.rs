@@ -65,3 +65,20 @@ fn different_seeds_can_roll_different_fuse_countdowns() {
         "expected at least two different despawn ticks across 5 seeds, got {ticks:?}"
     );
 }
+
+#[test]
+fn engine_key_held_works_through_the_batch_cli_path_with_no_live_input() {
+    // ADR-0013: batch commands (run/test/inspect/replay) have no live input
+    // source, so `engine.key_held` should resolve every key as not-held
+    // without erroring — this is a "the binding works end-to-end" check,
+    // not a live-input check (engine-script's own tests cover that).
+    const SCENE: &str = "tests/fixtures/scenes/reads_key_held.toml";
+    let json = engine_cli::run_and_dump(SimSource::Scene(SCENE.into()), 1, 1).unwrap();
+    let x = json["entities"][0]["components"]["Position"]["x"]
+        .as_f64()
+        .unwrap();
+    assert_eq!(
+        x, 0.0,
+        "no live input source means every key reads not-held"
+    );
+}

@@ -12,10 +12,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use engine_core::inspect::ComponentDumper;
 use engine_core::sim::Sim;
 use engine_core::{Input, KeyCode};
 use engine_render::WindowRenderer;
 use engine_scene::{ComponentRegistry, SystemRegistry};
+use engine_script::ScriptHost;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -40,8 +42,9 @@ pub fn play(
     backends: wgpu::Backends,
     max_ticks: Option<u64>,
 ) -> Result<(), CliError> {
-    let (sim, _dumpers) = engine_scene::load(scene, seed, components, systems)
+    let (sim, dumpers) = engine_scene::load(scene, seed, components, systems)
         .map_err(|e| CliError::from_scene_error(scene, &e))?;
+    let host = crate::build_script_host(&sim)?;
 
     let event_loop =
         EventLoop::new().map_err(|e| CliError::play_event_loop_failed(&e.to_string()))?;
@@ -49,6 +52,9 @@ pub fn play(
 
     let mut app = App {
         sim,
+        dumpers,
+        host,
+        components,
         assets_dir: assets_dir.to_path_buf(),
         width,
         height,
@@ -72,8 +78,11 @@ pub fn play(
     }
 }
 
-struct App {
+struct App<'a> {
     sim: Sim,
+    dumpers: Vec<ComponentDumper>,
+    host: Option<ScriptHost>,
+    components: &'a ComponentRegistry,
     assets_dir: PathBuf,
     width: u32,
     height: u32,
@@ -94,17 +103,61 @@ struct App {
 
 fn map_key(code: WinitKeyCode) -> Option<KeyCode> {
     match code {
-        WinitKeyCode::KeyW => Some(KeyCode::W),
         WinitKeyCode::KeyA => Some(KeyCode::A),
-        WinitKeyCode::KeyS => Some(KeyCode::S),
+        WinitKeyCode::KeyB => Some(KeyCode::B),
+        WinitKeyCode::KeyC => Some(KeyCode::C),
         WinitKeyCode::KeyD => Some(KeyCode::D),
+        WinitKeyCode::KeyE => Some(KeyCode::E),
+        WinitKeyCode::KeyF => Some(KeyCode::F),
+        WinitKeyCode::KeyG => Some(KeyCode::G),
+        WinitKeyCode::KeyH => Some(KeyCode::H),
+        WinitKeyCode::KeyI => Some(KeyCode::I),
+        WinitKeyCode::KeyJ => Some(KeyCode::J),
+        WinitKeyCode::KeyK => Some(KeyCode::K),
+        WinitKeyCode::KeyL => Some(KeyCode::L),
+        WinitKeyCode::KeyM => Some(KeyCode::M),
+        WinitKeyCode::KeyN => Some(KeyCode::N),
+        WinitKeyCode::KeyO => Some(KeyCode::O),
+        WinitKeyCode::KeyP => Some(KeyCode::P),
+        WinitKeyCode::KeyQ => Some(KeyCode::Q),
+        WinitKeyCode::KeyR => Some(KeyCode::R),
+        WinitKeyCode::KeyS => Some(KeyCode::S),
+        WinitKeyCode::KeyT => Some(KeyCode::T),
+        WinitKeyCode::KeyU => Some(KeyCode::U),
+        WinitKeyCode::KeyV => Some(KeyCode::V),
+        WinitKeyCode::KeyW => Some(KeyCode::W),
+        WinitKeyCode::KeyX => Some(KeyCode::X),
+        WinitKeyCode::KeyY => Some(KeyCode::Y),
+        WinitKeyCode::KeyZ => Some(KeyCode::Z),
+        WinitKeyCode::Digit0 => Some(KeyCode::Digit0),
+        WinitKeyCode::Digit1 => Some(KeyCode::Digit1),
+        WinitKeyCode::Digit2 => Some(KeyCode::Digit2),
+        WinitKeyCode::Digit3 => Some(KeyCode::Digit3),
+        WinitKeyCode::Digit4 => Some(KeyCode::Digit4),
+        WinitKeyCode::Digit5 => Some(KeyCode::Digit5),
+        WinitKeyCode::Digit6 => Some(KeyCode::Digit6),
+        WinitKeyCode::Digit7 => Some(KeyCode::Digit7),
+        WinitKeyCode::Digit8 => Some(KeyCode::Digit8),
+        WinitKeyCode::Digit9 => Some(KeyCode::Digit9),
+        WinitKeyCode::ArrowUp => Some(KeyCode::Up),
+        WinitKeyCode::ArrowDown => Some(KeyCode::Down),
+        WinitKeyCode::ArrowLeft => Some(KeyCode::Left),
+        WinitKeyCode::ArrowRight => Some(KeyCode::Right),
         WinitKeyCode::Space => Some(KeyCode::Space),
+        WinitKeyCode::Enter => Some(KeyCode::Enter),
+        WinitKeyCode::Tab => Some(KeyCode::Tab),
         WinitKeyCode::Escape => Some(KeyCode::Escape),
+        WinitKeyCode::ShiftLeft => Some(KeyCode::LeftShift),
+        WinitKeyCode::ShiftRight => Some(KeyCode::RightShift),
+        WinitKeyCode::ControlLeft => Some(KeyCode::LeftControl),
+        WinitKeyCode::ControlRight => Some(KeyCode::RightControl),
+        WinitKeyCode::AltLeft => Some(KeyCode::LeftAlt),
+        WinitKeyCode::AltRight => Some(KeyCode::RightAlt),
         _ => None,
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler for App<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -180,7 +233,17 @@ impl ApplicationHandler for App {
 
         self.sim.resources.insert(self.input.clone());
         while self.accumulator >= self.sim.dt {
-            self.sim.step();
+            if let Err(e) = crate::step_and_dispatch_with_input(
+                &mut self.sim,
+                &self.dumpers,
+                self.host.as_mut(),
+                self.components,
+                &self.input,
+            ) {
+                self.error = Some(e);
+                event_loop.exit();
+                return;
+            }
             self.accumulator -= self.sim.dt;
             if self.max_ticks.is_some_and(|m| self.sim.tick >= m) {
                 event_loop.exit();

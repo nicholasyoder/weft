@@ -47,11 +47,13 @@ fn dispatch_calls_the_named_function_and_writes_back_its_result() {
 
     let registry = registry();
     let mut rng = engine_core::rng::seeded(1);
+    let input = engine_core::Input::default();
     let errors = host.dispatch(DispatchCtx {
         world: &mut world,
         components: &registry,
         dumpers: DUMPERS,
         rng: &mut rng,
+        input: &input,
         tick: 0,
         dt: 1.0 / 60.0,
     });
@@ -104,11 +106,13 @@ fn math_random_is_disabled_not_ambiently_available() {
 
     let registry = registry();
     let mut rng = engine_core::rng::seeded(1);
+    let input = engine_core::Input::default();
     let errors = host.dispatch(DispatchCtx {
         world: &mut world,
         components: &registry,
         dumpers: DUMPERS,
         rng: &mut rng,
+        input: &input,
         tick: 0,
         dt: 1.0 / 60.0,
     });
@@ -132,11 +136,30 @@ fn dispatch_once(
     host: &mut ScriptHost,
     tick: u64,
 ) -> Vec<(hecs::Entity, ScriptError)> {
+    dispatch_once_with_input(
+        world,
+        registry,
+        rng,
+        host,
+        tick,
+        &engine_core::Input::default(),
+    )
+}
+
+fn dispatch_once_with_input(
+    world: &mut hecs::World,
+    registry: &ComponentRegistry,
+    rng: &mut EngineRng,
+    host: &mut ScriptHost,
+    tick: u64,
+    input: &engine_core::Input,
+) -> Vec<(hecs::Entity, ScriptError)> {
     host.dispatch(DispatchCtx {
         world,
         components: registry,
         dumpers: DUMPERS,
         rng,
+        input,
         tick,
         dt: 1.0 / 60.0,
     })
@@ -366,6 +389,80 @@ fn two_scripts_with_the_same_function_name_do_not_collide() {
         222,
         "entity_b should run b.lua's on_tick, not a.lua's"
     );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn engine_key_held_observes_the_live_input_a_script_is_dispatched_with() {
+    // ADR-0013: `engine.key_held` reads whatever `Input` `DispatchCtx` was
+    // built with — `live::play` threads its real, live `Input` through;
+    // this proves the Lua binding itself observes it correctly without
+    // needing a real window.
+    let dir =
+        std::env::temp_dir().join(format!("engine-script-test-keyheld-{}", std::process::id()));
+    let path = write_script(
+        &dir,
+        "reads_input.lua",
+        "function on_tick(components, tick, dt)\n  return { Counter = { value = engine.key_held(\"W\") and 1 or 0 } }\nend\n",
+    );
+
+    let mut world = hecs::World::new();
+    let entity = world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+    ));
+
+    let registry = registry();
+    let mut host = ScriptHost::new().unwrap();
+    host.load_file(&path).unwrap();
+    let mut rng = engine_core::rng::seeded(1);
+
+    let released = engine_core::Input::default();
+    let errors = dispatch_once_with_input(&mut world, &registry, &mut rng, &mut host, 0, &released);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert_eq!(world.get::<&Counter>(entity).unwrap().value, 0);
+
+    let mut held = engine_core::Input::default();
+    held.set_held(engine_core::KeyCode::W, true);
+    let errors = dispatch_once_with_input(&mut world, &registry, &mut rng, &mut host, 1, &held);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert_eq!(world.get::<&Counter>(entity).unwrap().value, 1);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn engine_key_held_rejects_an_unrecognized_key_name() {
+    let dir = std::env::temp_dir().join(format!(
+        "engine-script-test-keyheld-bad-{}",
+        std::process::id()
+    ));
+    let path = write_script(
+        &dir,
+        "bad_key_name.lua",
+        "function on_tick(components, tick, dt)\n  return { Counter = { value = engine.key_held(\"NotAKey\") and 1 or 0 } }\nend\n",
+    );
+
+    let mut world = hecs::World::new();
+    world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+    ));
+
+    let registry = registry();
+    let mut host = ScriptHost::new().unwrap();
+    host.load_file(&path).unwrap();
+    let mut rng = engine_core::rng::seeded(1);
+    let errors = dispatch_once(&mut world, &registry, &mut rng, &mut host, 0);
+    assert_eq!(errors.len(), 1);
+    assert!(matches!(errors[0].1, ScriptError::RuntimeFailed { .. }));
 
     std::fs::remove_dir_all(&dir).ok();
 }

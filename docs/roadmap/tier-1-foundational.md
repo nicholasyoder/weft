@@ -18,15 +18,13 @@ Zero audio code exists anywhere in the workspace (no crate, no dependency, confi
 
 Fully absent today, and the most structurally invasive item here: the mesh vertex format carries no bone index/weight data, so skinning has to be designed into the format before anything can be imported or played back. [ADR-0005](../decisions/0005-asset-pipeline.md) already names this a real gap, not an oversight — glTF animation channels/samplers aren't read at all currently. Doing this before Tier 2's PBR/normal-map work (which also touches the vertex format) means one vertex-format migration instead of two. Scope for this tier: the format change, glTF animation import, and basic runtime skeletal playback. Blending and state machines are Tier 3 — sequence those after basic playback actually works.
 
-## Expanded scripting API — **partially done** (2026-09-01)
+## Expanded scripting API — **done** (2026-09-01)
 
-`engine-script`'s Lua dispatch mechanism ([ADR-0006](../decisions/0006-scripting-and-hot-reload.md)) is built and tested. A script can now draw deterministic randomness (`engine.random`/`engine.random_int`), despawn itself or another entity (`engine.despawn`), and see any other entity via `engine.query` — see [ADR-0012](../decisions/0012-expanded-scripting-api.md) for the full design, proven end-to-end via `tests/fixtures/scenes/scripted_gameplay.toml`, not `games/sandbox`.
+`engine-script`'s Lua dispatch mechanism ([ADR-0006](../decisions/0006-scripting-and-hot-reload.md)) is built and tested. A script can draw deterministic randomness (`engine.random`/`engine.random_int`), despawn itself or another entity (`engine.despawn`), see any other entity via `engine.query` (see [ADR-0012](../decisions/0012-expanded-scripting-api.md)), and read live keyboard state via `engine.key_held` (see [ADR-0013](../decisions/0013-live-script-input-and-generalized-keycode.md)) — the fourth gap ADR-0012 originally deferred, closed once `engine-cli`'s live `play` loop actually dispatched scripts to give it a live consumer. `games/sandbox` still uses zero scripts as of this writing — nothing here adds one, only unblocks the roadmap item ADR-0012 called out as undercutting Weft's "agent-authorable via scripts" thesis.
 
-**Still open, and now the whole reason this item isn't fully done: input access.** Closing it turned out to require more than a Lua binding — `engine-cli`'s live `play` loop (`games/sandbox`'s run path) never calls script dispatch at all today, so there's no live consumer for input access to plug into yet. Wiring script dispatch into `play` is a real design question (dispatch timing relative to physics/rendering, whether native systems and scripts should both be able to react to input in the same tick) that no concrete script currently forces an answer to — revisit once one does. `games/sandbox` still uses zero scripts as a result; every actual gameplay system in it is still native Rust.
+## Generalize keyboard input — **done** (2026-09-01)
 
-## Generalize keyboard input
-
-`engine_core::KeyCode` is a fixed six-variant enum (W, A, S, D, Space, Escape) — fine for a physics playground, not enough for a real control scheme. Broadening this to a general key map is cheap and unblocks most next gameplay milestones. Mouse and gamepad support are a different kind of work (new device classes, not just more keys) and stay in Tier 4 until something concrete needs them.
+`engine_core::KeyCode` grew from a fixed six-variant enum (W, A, S, D, Space, Escape) to a practical full keyboard set — A–Z, digits, arrows, Enter/Tab/Space/Escape, and left/right Shift/Control/Alt — see [ADR-0013](../decisions/0013-live-script-input-and-generalized-keycode.md). Mouse and gamepad support are a different kind of work (new device classes, not just more keys) and stay in Tier 4 until something concrete needs them.
 
 ---
 

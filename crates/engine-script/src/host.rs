@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use engine_core::inspect::ComponentDumper;
 use engine_core::rng::EngineRng;
+use engine_core::{Input, KeyCode};
 use engine_scene::ComponentRegistry;
 use mlua::{Lua, LuaOptions, LuaSerdeExt, StdLib};
 use rand::Rng;
@@ -87,7 +88,7 @@ impl ScriptHost {
     /// doesn't hide problems with its siblings.
     pub fn dispatch(
         &mut self,
-        mut ctx: DispatchCtx<'_, '_, '_>,
+        mut ctx: DispatchCtx<'_, '_, '_, '_>,
     ) -> Vec<(hecs::Entity, ScriptError)> {
         let mut targets: Vec<(hecs::Entity, Script)> = ctx
             .world
@@ -108,7 +109,7 @@ impl ScriptHost {
 
     fn dispatch_one(
         &mut self,
-        ctx: &mut DispatchCtx<'_, '_, '_>,
+        ctx: &mut DispatchCtx<'_, '_, '_, '_>,
         entity: hecs::Entity,
         script: &Script,
     ) -> Result<(), ScriptError> {
@@ -217,6 +218,17 @@ impl ScriptHost {
                 })?;
                 engine_table.set("query", query_fn)?;
 
+                let input = ctx.input;
+                let key_held_fn = scope.create_function(|_, name: String| {
+                    let key = parse_key_name(&name).ok_or_else(|| {
+                        mlua::Error::RuntimeError(format!(
+                            "engine.key_held: '{name}' is not a recognized key name"
+                        ))
+                    })?;
+                    Ok(input.is_held(key))
+                })?;
+                engine_table.set("key_held", key_held_fn)?;
+
                 lua.globals().set("engine", engine_table)?;
                 func.call((input_value, ctx.tick, ctx.dt, self_id))
             })
@@ -313,13 +325,74 @@ fn decode_entity_id(id: f64, context: &str) -> mlua::Result<hecs::Entity> {
     })
 }
 
+/// Parses an `engine.key_held` argument against `KeyCode`'s variant names
+/// (see ADR-0013) — exact-case match, same convention scene files already
+/// use for component names.
+fn parse_key_name(name: &str) -> Option<KeyCode> {
+    use KeyCode::*;
+    Some(match name {
+        "A" => A,
+        "B" => B,
+        "C" => C,
+        "D" => D,
+        "E" => E,
+        "F" => F,
+        "G" => G,
+        "H" => H,
+        "I" => I,
+        "J" => J,
+        "K" => K,
+        "L" => L,
+        "M" => M,
+        "N" => N,
+        "O" => O,
+        "P" => P,
+        "Q" => Q,
+        "R" => R,
+        "S" => S,
+        "T" => T,
+        "U" => U,
+        "V" => V,
+        "W" => W,
+        "X" => X,
+        "Y" => Y,
+        "Z" => Z,
+        "Digit0" => Digit0,
+        "Digit1" => Digit1,
+        "Digit2" => Digit2,
+        "Digit3" => Digit3,
+        "Digit4" => Digit4,
+        "Digit5" => Digit5,
+        "Digit6" => Digit6,
+        "Digit7" => Digit7,
+        "Digit8" => Digit8,
+        "Digit9" => Digit9,
+        "Up" => Up,
+        "Down" => Down,
+        "Left" => Left,
+        "Right" => Right,
+        "Space" => Space,
+        "Enter" => Enter,
+        "Tab" => Tab,
+        "Escape" => Escape,
+        "LeftShift" => LeftShift,
+        "RightShift" => RightShift,
+        "LeftControl" => LeftControl,
+        "RightControl" => RightControl,
+        "LeftAlt" => LeftAlt,
+        "RightAlt" => RightAlt,
+        _ => return None,
+    })
+}
+
 /// Bundles what `ScriptHost::dispatch` needs from the caller's `Sim` into
 /// one borrow, keeping the method's argument count sane.
-pub struct DispatchCtx<'w, 'd, 'r> {
+pub struct DispatchCtx<'w, 'd, 'r, 'i> {
     pub world: &'w mut hecs::World,
     pub components: &'d ComponentRegistry,
     pub dumpers: &'d [ComponentDumper],
     pub rng: &'r mut EngineRng,
+    pub input: &'i Input,
     pub tick: u64,
     pub dt: f32,
 }

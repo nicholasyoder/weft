@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use diagnostics::CliError;
 use engine_core::inspect::ComponentDumper;
 use engine_core::sim::Sim;
+use engine_core::Input;
 use engine_scene::ComponentRegistry;
 use engine_script::{DispatchCtx, Script, ScriptHost};
 
@@ -68,26 +69,37 @@ impl SimSource {
         seed: u64,
     ) -> Result<(Sim, Vec<ComponentDumper>, Option<ScriptHost>), CliError> {
         let (sim, dumpers) = self.build(seed)?;
-
-        let mut paths: Vec<String> = sim
-            .world
-            .query::<&Script>()
-            .iter()
-            .map(|(_, s)| s.path.clone())
-            .collect();
-        if paths.is_empty() {
-            return Ok((sim, dumpers, None));
-        }
-        paths.sort();
-        paths.dedup();
-
-        let mut host = ScriptHost::new().map_err(|e| CliError::from_script_error(&e))?;
-        for path in &paths {
-            host.load_file(path.as_ref())
-                .map_err(|e| CliError::from_script_error(&e))?;
-        }
-        Ok((sim, dumpers, Some(host)))
+        let host = build_script_host(&sim)?;
+        Ok((sim, dumpers, host))
     }
+}
+
+/// Scans `sim`'s world for `Script` components (per ADR-0006) and, if any
+/// are found, loads a `ScriptHost` with every distinct referenced `.lua`
+/// file. A world with no `Script` components pays nothing extra: this
+/// returns `None`. Shared by `SimSource::build_with_scripts` (batch
+/// commands) and `live::play` (see ADR-0013), which builds its `Sim` via a
+/// caller-supplied registry rather than `SimSource`, so it can't just call
+/// `build_with_scripts` itself.
+pub(crate) fn build_script_host(sim: &Sim) -> Result<Option<ScriptHost>, CliError> {
+    let mut paths: Vec<String> = sim
+        .world
+        .query::<&Script>()
+        .iter()
+        .map(|(_, s)| s.path.clone())
+        .collect();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    paths.sort();
+    paths.dedup();
+
+    let mut host = ScriptHost::new().map_err(|e| CliError::from_script_error(&e))?;
+    for path in &paths {
+        host.load_file(path.as_ref())
+            .map_err(|e| CliError::from_script_error(&e))?;
+    }
+    Ok(Some(host))
 }
 
 /// Advances `sim` by one tick, then — if `host` is present — dispatches
@@ -97,11 +109,27 @@ impl SimSource {
 /// with partially-applied script output. `watch` mode (see `watch.rs`)
 /// handles the "don't crash on a bad edit" requirement at a different
 /// layer, by catching this `Err` per rerun instead of suppressing it here.
-fn step_and_dispatch(
+pub(crate) fn step_and_dispatch(
     sim: &mut Sim,
     dumpers: &[ComponentDumper],
     host: Option<&mut ScriptHost>,
     components: &ComponentRegistry,
+) -> Result<(), CliError> {
+    step_and_dispatch_with_input(sim, dumpers, host, components, &Input::default())
+}
+
+/// Like `step_and_dispatch`, but takes a live `Input` instead of always
+/// using an empty default — what `live::play` needs (see ADR-0013) so
+/// scripts can see the same keyboard state native systems already read via
+/// `Resources`. Batch commands (`run`/`test`/`inspect`/`replay`) have no
+/// live input source, so `step_and_dispatch` just forwards a fixed, empty
+/// default here — deterministic, not undefined.
+pub(crate) fn step_and_dispatch_with_input(
+    sim: &mut Sim,
+    dumpers: &[ComponentDumper],
+    host: Option<&mut ScriptHost>,
+    components: &ComponentRegistry,
+    input: &Input,
 ) -> Result<(), CliError> {
     sim.step();
     if let Some(host) = host {
@@ -110,6 +138,7 @@ fn step_and_dispatch(
             components,
             dumpers,
             rng: &mut sim.rng,
+            input,
             tick: sim.tick,
             dt: sim.dt,
         });
