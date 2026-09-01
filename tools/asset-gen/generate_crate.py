@@ -5,10 +5,12 @@ concrete prototype of ADR-0009's "headless Blender scripting" pattern
 
 No AI/ML model involved: this is a deterministic bpy script, the pattern
 ADR-0009 recommends for reproducible/batch content, in the spirit of
-Infinigen's "math rules only" approach.
+Infinigen's "math rules only" approach. --color/--bevel-width are exposed
+so the same script can deterministically produce a small kit of crate
+variants, not just one fixed asset.
 
 Usage:
-    blender --background --python tools/asset-gen/generate_crate.py -- --output <file.glb>
+    blender --background --python tools/asset-gen/generate_crate.py -- --output <file.glb> [--color R G B] [--bevel-width W]
 """
 
 import argparse
@@ -25,6 +27,20 @@ def parse_args():
         argv = []
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, help="Output .glb path")
+    parser.add_argument(
+        "--color",
+        type=float,
+        nargs=3,
+        default=(0.45, 0.30, 0.16),
+        metavar=("R", "G", "B"),
+        help="Base color, each channel 0.0-1.0 (default: the original crate brown)",
+    )
+    parser.add_argument(
+        "--bevel-width",
+        type=float,
+        default=0.06,
+        help="Edge bevel width (default: 0.06)",
+    )
     return parser.parse_args(argv)
 
 
@@ -40,14 +56,14 @@ def main():
     crate.name = "Crate"
 
     bevel = crate.modifiers.new(name="Bevel", type="BEVEL")
-    bevel.width = 0.06
+    bevel.width = args.bevel_width
     bevel.segments = 2
     bpy.ops.object.modifier_apply(modifier=bevel.name)
 
     material = bpy.data.materials.new(name="CrateMaterial")
     material.use_nodes = True
     bsdf = material.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = (0.45, 0.30, 0.16, 1.0)
+    bsdf.inputs["Base Color"].default_value = (*args.color, 1.0)
     crate.data.materials.append(material)
 
     bpy.ops.object.select_all(action="DESELECT")
