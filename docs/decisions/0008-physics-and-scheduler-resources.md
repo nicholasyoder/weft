@@ -32,4 +32,4 @@ Determinism: `Resources` is keyed by type and never iterated, so it introduces n
 ## Revisit when
 
 - A second stateful subsystem lands and its usage pattern reveals `get_or_insert_with`'s implicit lazy-init isn't the right shape for it (e.g. it needs configuration at `Sim::new` time rather than lazily on first tick).
-- Entity despawn is added to the engine — at that point `PhysicsWorld`'s (and any other resource's) entity-keyed maps need an eviction path, and `Resources` itself may need one too if a resource's lifetime should ever be shorter than the `Sim`'s.
+- Entity despawn is added to the engine — at that point `PhysicsWorld`'s (and any other resource's) entity-keyed maps need an eviction path, and `Resources` itself may need one too if a resource's lifetime should ever be shorter than the `Sim`'s. **Done**: see [ADR-0011](0011-entity-despawn-eviction.md).

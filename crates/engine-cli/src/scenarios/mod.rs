@@ -1,5 +1,6 @@
 pub mod basic;
 pub mod broken_rng;
+pub mod despawn_demo;
 pub mod physics_demo;
 
 use engine_core::inspect::ComponentDumper;
@@ -26,6 +27,11 @@ pub const SCENARIOS: &[Scenario] = &[
         name: "physics-demo",
         build: physics_demo::build,
         dumpers: physics_demo::DUMPERS,
+    },
+    Scenario {
+        name: "despawn-demo",
+        build: despawn_demo::build,
+        dumpers: despawn_demo::DUMPERS,
     },
 ];
 

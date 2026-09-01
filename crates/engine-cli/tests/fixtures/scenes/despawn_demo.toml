@@ -1,0 +1,38 @@
+[[entity]]
+name = "ground"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.RigidBody]
+body_type = "fixed"
+
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [50.0, 0.1, 50.0] }
+
+[[entity]]
+name = "ball"
+
+[entity.components.Transform]
+position = [0.0, 5.0, 0.0]
+
+[entity.components.RigidBody]
+body_type = "dynamic"
+
+[entity.components.Collider]
+shape = { kind = "sphere", radius = 0.5 }
+
+[entity.components.DespawnAfter]
+ticks_remaining = 10
+
+[[entity]]
+name = "marker"
+
+[entity.components.DespawnAfter]
+ticks_remaining = 3
+
+[[system]]
+name = "despawn-after"
+
+[[system]]
+name = "physics"

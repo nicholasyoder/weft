@@ -59,16 +59,33 @@ fn build_collider(collider: &Collider) -> rp::ColliderBuilder {
         .friction(collider.friction)
 }
 
-/// Steps physics by one tick: lazily registers newly-spawned
+/// Removes any rapier body whose owning entity no longer exists in `world`
+/// (despawned via `world.despawn` since physics last ran), evicted in
+/// `Entity::to_bits()` order per ADR-0002. See ADR-0011.
+fn evict_despawned(state: &mut PhysicsState, world: &hecs::World) {
+    let mut stale: Vec<hecs::Entity> = state
+        .bodies
+        .keys()
+        .copied()
+        .filter(|e| !world.contains(*e))
+        .collect();
+    stale.sort_by_key(|e| e.to_bits());
+    for entity in stale {
+        if let Some(handle) = state.bodies.remove(&entity) {
+            state.world.remove_body(handle);
+        }
+    }
+}
+
+/// Steps physics by one tick: evicts any despawned entity's body first
+/// (see `evict_despawned`/ADR-0011), lazily registers newly-spawned
 /// `(RigidBody, Collider, Transform)` entities into the rapier world,
 /// advances the simulation by `args.dt`, then writes each non-fixed body's
 /// updated pose back to its `Transform`. Registered into `SystemRegistry`
 /// as `"physics"`.
-///
-/// No despawn handling: no entity in this engine is ever despawned yet, so
-/// the handle map only grows within a `Sim`'s lifetime (see ADR-0008).
 pub fn physics_step(args: &mut SystemArgs) {
     let state = args.resources.get_or_insert_with(PhysicsState::default);
+    evict_despawned(state, args.world);
 
     let new_entities: Vec<_> = args
         .world
@@ -384,6 +401,35 @@ mod tests {
             "expected linear_damping to noticeably slow the ball down: \
              speed_right_after_impulse={speed_right_after_impulse}, \
              speed_after_coasting={speed_after_coasting}"
+        );
+    }
+
+    #[test]
+    fn despawning_an_entity_evicts_its_physics_body() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut().add_system("physics", physics_step);
+        let ball = spawn_ball(&mut sim, 10.0);
+
+        sim.step(); // registers the body
+        assert!(
+            sim.resources
+                .get::<PhysicsState>()
+                .unwrap()
+                .bodies
+                .contains_key(&ball),
+            "expected the body to be registered after its first tick"
+        );
+
+        sim.world.despawn(ball).unwrap();
+        sim.step(); // evict_despawned should now run and remove it
+
+        assert!(
+            !sim.resources
+                .get::<PhysicsState>()
+                .unwrap()
+                .bodies
+                .contains_key(&ball),
+            "expected the despawned entity's body to be evicted"
         );
     }
 

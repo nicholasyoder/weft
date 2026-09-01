@@ -6,10 +6,6 @@ Seeded by a full capability audit of the engine (2026-09-01) against what a full
 
 ---
 
-## Entity despawn
-
-No despawn mechanism exists anywhere in the engine today — entities can be created but never removed. Already flagged as a known future gap in [ADR-0008](../decisions/0008-physics-and-scheduler-resources.md). This quietly blocks or complicates several other items on this page: triggers need to remove one-shot pickups, script-driven spawning needs a matching despawn, and `engine-physics`'s entity↔rapier-handle map only ever grows without it. Likely the single cheapest, most-leveraged item on this whole roadmap.
-
 ## Text rendering + a minimal UI layer
 
 `engine-render` has no glyph/font pipeline at all today — no HUD, menu, dialogue box, or even a debug overlay is possible without one. Worth building before the rendering pipeline picks up shadows, PBR, and post-processing on top of it (Tier 2/3), while there's less to integrate against. Per [ADR-0001](../decisions/0001-rust-3d-from-scratch.md) and the engine's own thesis, any UI layer has to sit strictly on top of the same CLI/API surface everything else uses — never a capability's only entry point.
@@ -24,7 +20,7 @@ Fully absent today, and the most structurally invasive item here: the mesh verte
 
 ## Expanded scripting API
 
-`engine-script`'s Lua dispatch mechanism ([ADR-0006](../decisions/0006-scripting-and-hot-reload.md)) is built and tested, but `games/sandbox` uses zero scripts today — every system in the actual game is native Rust. A script can currently only read and write its own entity's components. Missing: a deterministic RNG binding (deferred per ADR-0006, still no binding at all), entity spawn/despawn (blocked on the despawn item above), generic entity queries (a script can't see any entity but itself), and input access. Closing this gap is what turns scripting from a proven-but-unused mechanism into something real gameplay logic can actually use.
+`engine-script`'s Lua dispatch mechanism ([ADR-0006](../decisions/0006-scripting-and-hot-reload.md)) is built and tested, but `games/sandbox` uses zero scripts today — every system in the actual game is native Rust. A script can currently only read and write its own entity's components. Missing: a deterministic RNG binding (deferred per ADR-0006, still no binding at all), entity spawn/despawn (the engine-level mechanism now exists per [ADR-0011](../decisions/0011-entity-despawn-eviction.md) — no Lua binding for it yet), generic entity queries (a script can't see any entity but itself), and input access. Closing this gap is what turns scripting from a proven-but-unused mechanism into something real gameplay logic can actually use.
 
 ## Generalize keyboard input
 

@@ -11,6 +11,7 @@ use engine_scene::{ComponentRegistry, SystemRegistry};
 use engine_script::Script;
 
 use crate::scenarios::basic::{dump_position, dump_velocity, movement_system, Position, Velocity};
+use crate::scenarios::despawn_demo::{despawn_after_system, dump_despawn_after, DespawnAfter};
 
 fn load_position(
     v: serde_json::Value,
@@ -113,6 +114,14 @@ pub(crate) fn dump_collider(e: &hecs::EntityRef) -> Option<(&'static str, serde_
         .map(|c| ("Collider", serde_json::to_value(*c).unwrap()))
 }
 
+fn load_despawn_after(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<DespawnAfter>(v)?);
+    Ok(())
+}
+
 pub fn components() -> ComponentRegistry {
     let mut registry = ComponentRegistry::new();
     registry.register("Position", load_position, dump_position);
@@ -124,6 +133,7 @@ pub fn components() -> ComponentRegistry {
     registry.register("Script", load_script, dump_script);
     registry.register("RigidBody", load_rigid_body, dump_rigid_body);
     registry.register("Collider", load_collider, dump_collider);
+    registry.register("DespawnAfter", load_despawn_after, dump_despawn_after);
     registry
 }
 
@@ -131,5 +141,6 @@ pub fn systems() -> SystemRegistry {
     let mut registry = SystemRegistry::new();
     registry.register("movement", movement_system);
     registry.register("physics", physics_step);
+    registry.register("despawn-after", despawn_after_system);
     registry
 }
