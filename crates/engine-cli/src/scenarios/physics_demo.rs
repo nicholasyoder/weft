@@ -19,6 +19,8 @@ pub fn build(seed: u64) -> Sim {
         Transform::from_position(Vec3::ZERO),
         RigidBody {
             body_type: BodyType::Fixed,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
         },
         Collider {
             shape: ColliderShape::Box {
@@ -32,6 +34,8 @@ pub fn build(seed: u64) -> Sim {
         Transform::from_position(Vec3::new(0.0, 5.0, 0.0)),
         RigidBody {
             body_type: BodyType::Dynamic,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
         },
         Collider {
             shape: ColliderShape::Sphere { radius: 0.5 },

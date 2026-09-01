@@ -19,9 +19,23 @@ pub enum BodyType {
 /// [`Collider`] and `engine_core::Transform` (the physics system's initial
 /// pose comes from `Transform`, and — for `Dynamic` bodies — is written
 /// back to it every tick).
+///
+/// `linear_damping`/`angular_damping` both default to `0.0` (rapier's own
+/// default — a body coasts at constant velocity once moving, since a
+/// rolling/sliding contact loses very little speed to simple Coulomb
+/// friction). Force-driven gameplay (e.g. a player-controlled ball, see
+/// `games/sandbox`) generally wants nonzero damping so releasing input
+/// actually decelerates the body instead of letting it coast indefinitely —
+/// that's a per-entity, scene-authored tuning choice, not an engine default,
+/// since a body that's *supposed* to coast (Phase 6's falling-ball demo)
+/// shouldn't quietly change behavior.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RigidBody {
     pub body_type: BodyType,
+    #[serde(default)]
+    pub linear_damping: f32,
+    #[serde(default)]
+    pub angular_damping: f32,
 }
 
 /// A collider's shape, in engine-native terms — never a raw rapier type in

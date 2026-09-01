@@ -19,14 +19,22 @@ pub struct PhysicsState {
 }
 
 impl PhysicsState {
-    /// Applies a continuous force to `entity`'s dynamic rigid body for this
-    /// tick. Rapier's `add_force` is a pending accumulator cleared every
-    /// `world.step()` — call this from a system registered *before*
-    /// "physics" in scene order so the force is still pending when
-    /// `physics_step` steps the world. Returns `false` (silent no-op, never
-    /// a panic) if `entity` has no registered body yet — e.g. its very
-    /// first tick, before `physics_step` has run once and lazily
-    /// registered it.
+    /// Applies a force to `entity`'s dynamic rigid body for this tick only.
+    /// Call this from a system registered *before* "physics" in scene order
+    /// so the force is still pending when `physics_step` steps the world.
+    ///
+    /// Rapier's own `add_force` does **not** clear itself after stepping —
+    /// its doc comment is explicit that a force "keeps being applied at
+    /// every physics step until you change it or clear it." `physics_step`
+    /// is what makes this a one-tick-only force: it calls `reset_forces` on
+    /// every body right after stepping. Don't call `apply_force` from
+    /// anywhere that isn't guaranteed to run before "physics" every tick a
+    /// force should be active — there's no other mechanism keeping it
+    /// applied.
+    ///
+    /// Returns `false` (silent no-op, never a panic) if `entity` has no
+    /// registered body yet — e.g. its very first tick, before
+    /// `physics_step` has run once and lazily registered it.
     pub fn apply_force(&mut self, entity: hecs::Entity, force: glam::Vec3, wake_up: bool) -> bool {
         let Some(&handle) = self.bodies.get(&entity) else {
             return false;
@@ -79,7 +87,9 @@ pub fn physics_step(args: &mut SystemArgs) {
             BodyType::Dynamic => rp::RigidBodyBuilder::dynamic(),
             BodyType::Fixed => rp::RigidBodyBuilder::fixed(),
         }
-        .pose(pose);
+        .pose(pose)
+        .linear_damping(rb.linear_damping)
+        .angular_damping(rb.angular_damping);
         let (body_handle, _collider_handle) =
             state.world.insert(body_builder, build_collider(&col));
         state.bodies.insert(entity, body_handle);
@@ -89,7 +99,7 @@ pub fn physics_step(args: &mut SystemArgs) {
     state.world.step();
 
     for (&entity, &handle) in state.bodies.iter() {
-        let Some(body) = state.world.bodies.get(handle) else {
+        let Some(body) = state.world.bodies.get_mut(handle) else {
             continue;
         };
         if body.is_fixed() {
@@ -99,6 +109,17 @@ pub fn physics_step(args: &mut SystemArgs) {
             transform.position = vec3_from_rapier(body.translation());
             transform.rotation = quat_from_rapier(*body.rotation());
         }
+        // rapier does NOT clear a force added via `PhysicsState::apply_force`
+        // after stepping — its own doc comment on `reset_forces` is explicit
+        // that a user force "keeps being applied at every physics step until
+        // you change it or clear it." Without this, a single one-tick
+        // `apply_force` call would push the body every subsequent tick
+        // forever, not just the tick it was called on — exactly the
+        // reported "tapping a key shoots the ball at the nearest wall" bug.
+        // Cleared here (not woken by it — `wake_up: false` — clearing an
+        // already-zero force is a no-op per `reset_forces`'s own check, so
+        // this never spuriously wakes a sleeping body).
+        body.reset_forces(false);
     }
 }
 
@@ -112,6 +133,8 @@ mod tests {
         sim.world.spawn((
             RigidBody {
                 body_type: BodyType::Fixed,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
             },
             Collider {
                 shape: ColliderShape::Box {
@@ -128,6 +151,8 @@ mod tests {
         sim.world.spawn((
             RigidBody {
                 body_type: BodyType::Dynamic,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
             },
             Collider {
                 shape: ColliderShape::Sphere { radius: 0.5 },
@@ -189,6 +214,8 @@ mod tests {
         let ball = sim.world.spawn((
             RigidBody {
                 body_type: BodyType::Dynamic,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
             },
             Collider {
                 shape: ColliderShape::Sphere { radius: 0.5 },
@@ -227,6 +254,8 @@ mod tests {
         let ball = sim.world.spawn((
             RigidBody {
                 body_type: BodyType::Dynamic,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
             },
             Collider {
                 shape: ColliderShape::Sphere { radius: 0.5 },
@@ -242,6 +271,119 @@ mod tests {
         assert!(
             !applied,
             "expected apply_force to no-op before physics_step registers the entity"
+        );
+    }
+
+    #[test]
+    fn apply_force_only_affects_the_tick_it_was_called_on() {
+        // Regression test for the actual root cause of a reported bug
+        // ("tapping a movement key shoots the ball all the way to the
+        // nearest wall"): rapier's `add_force` does NOT clear itself after
+        // stepping — its own doc comment on `reset_forces` says a force
+        // "keeps being applied at every physics step until you change it
+        // or clear it." Without `physics_step` calling `reset_forces` every
+        // tick, one `apply_force` call would keep accelerating the body
+        // forever, not just for the tick it was called on. `linear_damping`
+        // is 0.0 here specifically so this test isolates *that* bug from
+        // damping — X speed should be flat, not still rising, once
+        // `apply_force` stops being called.
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut().add_system("physics", physics_step);
+        let ball = sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Dynamic,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                restitution: 0.0,
+                friction: 0.5,
+            },
+            Transform::from_position(Vec3::new(0.0, 100.0, 0.0)),
+        ));
+
+        sim.step(); // registers the body
+        sim.resources
+            .get_mut::<PhysicsState>()
+            .unwrap()
+            .apply_force(ball, Vec3::new(200.0, 0.0, 0.0), true);
+        sim.step(); // consumes the force for exactly this tick
+
+        let linvel_x = |sim: &Sim| {
+            let state = sim.resources.get::<PhysicsState>().unwrap();
+            let handle = *state.bodies.get(&ball).unwrap();
+            state.world.bodies.get(handle).unwrap().linvel().x
+        };
+        let speed_after_one_tick = linvel_x(&sim);
+
+        // No more `apply_force` calls — with zero damping, X speed should
+        // stay flat (only gravity, purely on Y, is still acting).
+        sim.run(10);
+        let speed_after_more_ticks = linvel_x(&sim);
+
+        assert!(
+            (speed_after_more_ticks - speed_after_one_tick).abs() < 0.01,
+            "expected X speed to stay constant once apply_force stopped being \
+             called: speed_after_one_tick={speed_after_one_tick}, \
+             speed_after_more_ticks={speed_after_more_ticks}"
+        );
+    }
+
+    #[test]
+    fn linear_damping_decelerates_a_body_once_no_force_is_applied() {
+        // Regression test for a reported bug: a ball given a brief tap of
+        // force would coast at that speed indefinitely (a rolling contact
+        // loses very little speed to plain Coulomb friction) instead of
+        // slowing down, "shooting" all the way to the nearest wall.
+        // `linear_damping` is the fix — assert it actually decelerates a
+        // body with no force being applied, not just that it's threaded
+        // through to rapier without checking the resulting behavior.
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut().add_system("physics", physics_step);
+        let ball = sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Dynamic,
+                linear_damping: 4.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                restitution: 0.0,
+                friction: 0.5,
+            },
+            Transform::from_position(Vec3::new(0.0, 50.0, 0.0)),
+        ));
+
+        // Register the body, then give it a one-tick horizontal impulse.
+        sim.step();
+        sim.resources
+            .get_mut::<PhysicsState>()
+            .unwrap()
+            .apply_force(ball, Vec3::new(200.0, 0.0, 0.0), true);
+        sim.step();
+
+        let linvel_x = |sim: &Sim| {
+            let state = sim.resources.get::<PhysicsState>().unwrap();
+            let handle = *state.bodies.get(&ball).unwrap();
+            state.world.bodies.get(handle).unwrap().linvel().x
+        };
+        let speed_right_after_impulse = linvel_x(&sim);
+        assert!(
+            speed_right_after_impulse > 0.0,
+            "expected the impulse to give the ball positive X speed, got {speed_right_after_impulse}"
+        );
+
+        // No more force applied — with damping, speed should drop
+        // substantially (an undamped body would keep coasting at roughly
+        // the same speed indefinitely).
+        sim.run(30);
+        let speed_after_coasting = linvel_x(&sim);
+        assert!(
+            speed_after_coasting < speed_right_after_impulse * 0.5,
+            "expected linear_damping to noticeably slow the ball down: \
+             speed_right_after_impulse={speed_right_after_impulse}, \
+             speed_after_coasting={speed_after_coasting}"
         );
     }
 

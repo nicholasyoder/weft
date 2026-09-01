@@ -96,6 +96,12 @@ name = "player"
 position = [0.0, 2.0, 4.0]
 [entity.components.RigidBody]
 body_type = "dynamic"
+# A rolling sphere loses very little speed to plain contact friction, so
+# without damping the ball would coast at whatever speed a tap left it at
+# until it hits a wall. This damping is what makes the ball actually slow
+# down once WASD is released, instead of "shooting" to the nearest barrier.
+linear_damping = 4.0
+angular_damping = 4.0
 [entity.components.Collider]
 shape = { kind = "sphere", radius = 0.5 }
 restitution = 0.1
