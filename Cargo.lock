@@ -802,6 +802,7 @@ dependencies = [
  "hecs",
  "hound",
  "kira",
+ "lru",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -883,6 +884,7 @@ dependencies = [
  "glam 0.29.3",
  "hecs",
  "image",
+ "lru",
  "pollster",
  "serde",
  "serde_json",
@@ -1385,6 +1387,8 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
 ]
 
@@ -1726,6 +1730,15 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "lru"
+version = "0.18.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d317b4b9eb398e6acce275758ec6125535505e7a146fb1a9b8bda2451b0ff4c"
+dependencies = [
+ "hashbrown 0.17.1",
+]
 
 [[package]]
 name = "lua-src"

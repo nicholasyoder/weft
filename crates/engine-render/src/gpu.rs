@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use glam::{Mat4, Vec3};
+use lru::LruCache;
 use wgpu::util::DeviceExt;
 
 use crate::components::{Camera, Material, MeshKind, MeshRef, Text};
@@ -12,6 +14,13 @@ use engine_core::{JointPalette, Transform};
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// Fixed capacity for the mesh/texture/skin/font caches below — bounds
+/// long-running `engine play`/`--watch` sessions with hot-reloaded assets
+/// (previously unbounded `HashMap`s, a real leak risk). Revisit if a real
+/// workload needs tuning; no fixture today approaches this many distinct
+/// live assets, so eviction never triggers in tests.
+const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(256).unwrap();
 
 /// A hardcoded key light — simple-lit, not PBR, per Phase 2's scope.
 const LIGHT_DIR: Vec3 = Vec3::new(-0.4, -1.0, -0.3);
@@ -177,8 +186,8 @@ pub struct RenderContext {
     cube_buffers: MeshBuffers,
     plane_buffers: MeshBuffers,
     sphere_buffers: MeshBuffers,
-    mesh_cache: HashMap<String, MeshBuffers>,
-    texture_cache: HashMap<String, wgpu::BindGroup>,
+    mesh_cache: LruCache<String, MeshBuffers>,
+    texture_cache: LruCache<String, wgpu::BindGroup>,
     // Skinned mesh pass — a second shader/pipeline (opaque, same depth
     // settings as the 3D pipeline; not alpha-blended like the UI pass
     // below) with a third bind group carrying a per-draw joint-matrix
@@ -190,7 +199,7 @@ pub struct RenderContext {
     // Keyed by (mesh_hash, skin_hash) — a mesh could in principle be
     // referenced with different skins, though `engine import` never
     // produces that today.
-    skin_cache: HashMap<(String, String), MeshBuffers>,
+    skin_cache: LruCache<(String, String), MeshBuffers>,
     // UI/text pass — a second shader/pipeline (alpha-blended, depth-always)
     // reusing `texture_bind_group_layout`/`sampler` above for its glyph
     // atlas textures, since an R8Unorm atlas fits that same layout shape.
@@ -200,7 +209,7 @@ pub struct RenderContext {
     ui_pipeline_layout: wgpu::PipelineLayout,
     ui_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     default_atlas: GlyphAtlas,
-    font_cache: HashMap<String, GlyphAtlas>,
+    font_cache: LruCache<String, GlyphAtlas>,
     core: GraphicsCore,
 }
 
@@ -425,19 +434,19 @@ impl RenderContext {
             cube_buffers,
             plane_buffers,
             sphere_buffers,
-            mesh_cache: HashMap::new(),
-            texture_cache: HashMap::new(),
+            mesh_cache: LruCache::new(CACHE_CAPACITY),
+            texture_cache: LruCache::new(CACHE_CAPACITY),
             skinned_shader,
             joint_bind_group_layout,
             skinned_pipeline_layout,
             skinned_pipelines: HashMap::new(),
-            skin_cache: HashMap::new(),
+            skin_cache: LruCache::new(CACHE_CAPACITY),
             ui_shader,
             ui_bind_group_layout,
             ui_pipeline_layout,
             ui_pipelines: HashMap::new(),
             default_atlas,
-            font_cache: HashMap::new(),
+            font_cache: LruCache::new(CACHE_CAPACITY),
         })
     }
 
@@ -687,7 +696,7 @@ impl RenderContext {
 
                 let texture_bind_group = match &drawable.texture {
                     Some(hash) => {
-                        if !self.texture_cache.contains_key(hash) {
+                        if !self.texture_cache.contains(hash) {
                             let bind_group = load_texture_bind_group(
                                 hash,
                                 &self.core.device,
@@ -696,7 +705,7 @@ impl RenderContext {
                                 &self.texture_bind_group_layout,
                                 &self.sampler,
                             )?;
-                            self.texture_cache.insert(hash.clone(), bind_group);
+                            self.texture_cache.put(hash.clone(), bind_group);
                         }
                         self.texture_cache.get(hash).unwrap()
                     }
@@ -722,14 +731,14 @@ impl RenderContext {
 
                 if let Some((mesh_hash, skin_hash, matrices)) = skinned {
                     let key = (mesh_hash, skin_hash);
-                    if !self.skin_cache.contains_key(&key) {
+                    if !self.skin_cache.contains(&key) {
                         let buffers = load_skinned_mesh_buffers(
                             &key.0,
                             &key.1,
                             &self.core.device,
                             &asset_store,
                         )?;
-                        self.skin_cache.insert(key.clone(), buffers);
+                        self.skin_cache.put(key.clone(), buffers);
                     }
                     let (vertex_buffer, index_buffer, index_count) =
                         self.skin_cache.get(&key).unwrap();
@@ -783,9 +792,9 @@ impl RenderContext {
                         self.sphere_buffers.2,
                     ),
                     MeshKind::Asset(hash) => {
-                        if !self.mesh_cache.contains_key(hash) {
+                        if !self.mesh_cache.contains(hash) {
                             let buffers = load_mesh_buffers(hash, &self.core.device, &asset_store)?;
-                            self.mesh_cache.insert(hash.clone(), buffers);
+                            self.mesh_cache.put(hash.clone(), buffers);
                         }
                         let (vb, ib, count) = self.mesh_cache.get(hash).unwrap();
                         (vb, ib, *count)
@@ -841,7 +850,7 @@ impl RenderContext {
 
                 for (font_key, group) in &groups {
                     if let Some(hash) = font_key {
-                        if !self.font_cache.contains_key(*hash) {
+                        if !self.font_cache.contains(*hash) {
                             let bytes = asset_store.get(hash)?;
                             let atlas = GlyphAtlas::build(
                                 &self.core.device,
@@ -850,7 +859,7 @@ impl RenderContext {
                                 &self.sampler,
                                 &bytes,
                             )?;
-                            self.font_cache.insert((*hash).to_string(), atlas);
+                            self.font_cache.put((*hash).to_string(), atlas);
                         }
                     }
                     let atlas = match font_key {

@@ -1,11 +1,19 @@
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::num::NonZeroUsize;
 
 use engine_assets::{AssetError, AssetStore};
 use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::{AssetsDir, AudioSettings, SoundEventQueue};
 use kira::sound::static_sound::StaticSoundData;
 use kira::Tween;
+use lru::LruCache;
+
+/// Fixed capacity for `AudioCache::clips`, mirroring
+/// `engine-render`'s `CACHE_CAPACITY` — bounds a long-running `engine
+/// play`/`--watch` session against unbounded growth from hot-reloaded
+/// clips (previously an unbounded `HashMap`).
+const CLIP_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(256).unwrap();
 
 use crate::backend::{AudioBackend, VoiceHandle};
 use crate::components::{AudioSource, SoundsPlayed};
@@ -32,13 +40,21 @@ fn audio_error_to_system_error(e: AudioError) -> SystemError {
 /// `AnimCache`/`engine-render`'s `*_cache` fields already use (see
 /// ADR-0015/0016). Private: `engine-cli` only ever touches `AudioState`,
 /// never this directly.
-#[derive(Default)]
 struct AudioCache {
-    clips: HashMap<String, StaticSoundData>,
+    clips: LruCache<String, StaticSoundData>,
     /// `None` once started with no handle to stop later (batch commands
     /// with no backend at all); `Some` for either real backend, since both
     /// now have a stoppable voice concept (see `VoiceHandle`).
     started: HashMap<hecs::Entity, Option<VoiceHandle>>,
+}
+
+impl Default for AudioCache {
+    fn default() -> Self {
+        Self {
+            clips: LruCache::new(CLIP_CACHE_CAPACITY),
+            started: HashMap::new(),
+        }
+    }
 }
 
 impl AudioCache {
@@ -49,7 +65,7 @@ impl AudioCache {
     /// — the same posture `AnimCache::ensure_clip`/`ensure_skeleton`
     /// establish, reused here instead of panicking.
     fn ensure_clip(&mut self, store: &AssetStore, hash: &str) -> Result<(), SystemError> {
-        if self.clips.contains_key(hash) {
+        if self.clips.contains(hash) {
             return Ok(());
         }
         let bytes = store.get(hash).map_err(asset_error_to_system_error)?;
@@ -59,11 +75,11 @@ impl AudioCache {
                 source: e,
             })
         })?;
-        self.clips.insert(hash.to_string(), decoded);
+        self.clips.put(hash.to_string(), decoded);
         Ok(())
     }
 
-    fn clip(&self, hash: &str) -> &StaticSoundData {
+    fn clip(&mut self, hash: &str) -> &StaticSoundData {
         self.clips
             .get(hash)
             .expect("ensure_clip must be called before clip")

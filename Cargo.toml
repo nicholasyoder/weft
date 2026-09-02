@@ -46,3 +46,4 @@ rapier3d = "0.35"
 winit = "0.30"
 kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "ogg", "vorbis", "pcm"] }
 hound = "3"
+lru = "0.18.3"

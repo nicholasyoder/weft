@@ -12,3 +12,4 @@ serde_json.workspace = true
 thiserror.workspace = true
 kira.workspace = true
 hound.workspace = true
+lru.workspace = true

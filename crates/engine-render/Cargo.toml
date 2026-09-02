@@ -17,3 +17,4 @@ pollster.workspace = true
 image.workspace = true
 winit.workspace = true
 fontdue = "0.9.4"
+lru.workspace = true
