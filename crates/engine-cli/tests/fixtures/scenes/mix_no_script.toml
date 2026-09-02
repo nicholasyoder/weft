@@ -1,0 +1,13 @@
+[meta]
+dt = 0.016666667
+
+[[entity]]
+name = "music_player"
+
+[entity.components.AudioSource]
+clip = "8177c945026317eac5e844ce58204a1e81037b48f8d709a5f3c4ab94cd01b917"
+looping = true
+volume = 0.5
+
+[[system]]
+name = "audio"

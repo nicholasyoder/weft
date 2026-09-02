@@ -1,5 +1,5 @@
-//! A thin `rmcp`-based MCP server exposing the six `engine` CLI commands
-//! (`run`/`test`/`inspect`/`replay`/`render`/`import`) as typed tools —
+//! A thin `rmcp`-based MCP server exposing the seven `engine` CLI commands
+//! (`run`/`test`/`inspect`/`replay`/`render`/`mix`/`import`) as typed tools —
 //! see ADR-0007 for why every tool body here is just arg-shaping around
 //! `engine_cli`'s public core functions, never a second implementation of
 //! any command's logic.
@@ -117,8 +117,23 @@ pub struct RenderParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MixParams {
+    /// Path to the scene file to load, run, and mix down to a WAV file.
+    pub scene: String,
+    /// Path to write the mixed-down WAV file to.
+    pub to: String,
+    /// Content-addressed asset store directory. Defaults to "assets".
+    pub assets_dir: Option<String>,
+    pub seed: Option<u64>,
+    pub ticks: Option<u64>,
+    /// Output sample rate in Hz. Defaults to 44100.
+    pub sample_rate: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ImportParams {
-    /// Path to a glTF file (.gltf/.glb) or a loose image file to import.
+    /// Path to a glTF file (.gltf/.glb), a loose image file, a font
+    /// (.ttf/.otf), or an audio file (.wav/.ogg) to import.
     pub input: String,
     /// Content-addressed asset store directory. Defaults to "assets".
     pub assets_dir: Option<String>,
@@ -331,16 +346,52 @@ impl WeftServer {
         }
     }
 
-    /// Converts a glTF file, a loose image file, or a font file into the
-    /// content-addressed asset store and returns a pasteable
-    /// scene-text-file fragment — the same operation as `engine import`.
+    /// Loads a scene file, runs it, and writes the resulting audio mixdown
+    /// to a WAV file — the same operation as `engine mix`. No real audio
+    /// device is used or required (see ADR-0016).
+    #[tool(
+        name = "weft_mix",
+        description = "Load a scene file, run it, and write the resulting audio mixdown to a WAV file. No real audio device required."
+    )]
+    async fn mix(&self, Parameters(p): Parameters<MixParams>) -> CallToolResult {
+        let seed = p.seed.unwrap_or(1);
+        let ticks = p.ticks.unwrap_or(60);
+        if ticks == 0 {
+            return err(CliError::invalid_ticks(ticks));
+        }
+        let assets_dir = p.assets_dir.unwrap_or_else(|| "assets".to_string());
+        let sample_rate = p.sample_rate.unwrap_or(44100);
+
+        match engine_cli::mix_scene(
+            p.scene.as_ref(),
+            seed,
+            ticks,
+            sample_rate,
+            assets_dir.as_ref(),
+            p.to.as_ref(),
+        ) {
+            Ok(()) => ok(json!({
+                "status": "ok",
+                "scene": p.scene,
+                "to": p.to,
+                "sample_rate": sample_rate,
+                "ticks": ticks,
+            })),
+            Err(e) => err(e),
+        }
+    }
+
+    /// Converts a glTF file, a loose image file, a font file, or an audio
+    /// file into the content-addressed asset store and returns a
+    /// pasteable scene-text-file fragment — the same operation as
+    /// `engine import`.
     /// Unlike the CLI's optional `--out`, this always returns the fragment
     /// as tool output rather than writing a file (an agent driving this
     /// tool already has filesystem tools of its own if it wants one
     /// written out).
     #[tool(
         name = "weft_import",
-        description = "Import a glTF, image, or font (.ttf/.otf) file into the asset store and return a pasteable scene-text-file fragment."
+        description = "Import a glTF, image, font (.ttf/.otf), or audio (.wav/.ogg) file into the asset store and return a pasteable scene-text-file fragment."
     )]
     async fn import(&self, Parameters(p): Parameters<ImportParams>) -> CallToolResult {
         let assets_dir = p.assets_dir.unwrap_or_else(|| "assets".to_string());
@@ -356,6 +407,7 @@ impl WeftServer {
                 "skin_hash": result.skin_hash,
                 "skeleton_hash": result.skeleton_hash,
                 "clip_hash": result.clip_hash,
+                "audio_hash": result.audio_hash,
             })),
             Err(e) => err(e),
         }
@@ -366,10 +418,10 @@ impl WeftServer {
 impl ServerHandler for WeftServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "Weft engine MCP server. Six tools (weft_run, weft_test, weft_inspect, \
-             weft_replay, weft_render, weft_import) are 1:1 wrappers over the `engine` \
-             CLI's run/test/inspect/replay/render/import subcommands, with identical \
-             semantics and error shape. Every failure returns a structured \
+            "Weft engine MCP server. Seven tools (weft_run, weft_test, weft_inspect, \
+             weft_replay, weft_render, weft_mix, weft_import) are 1:1 wrappers over the \
+             `engine` CLI's run/test/inspect/replay/render/mix/import subcommands, with \
+             identical semantics and error shape. Every failure returns a structured \
              {\"error\": {\"code\", \"message\", \"context\"}} payload — see AGENTS.md \
              at the repo root for the full contract.",
         )

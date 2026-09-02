@@ -1,0 +1,14 @@
+[package]
+name = "engine-audio"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+engine-assets = { path = "../engine-assets" }
+hecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+kira.workspace = true
+hound.workspace = true

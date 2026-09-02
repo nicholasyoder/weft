@@ -38,6 +38,7 @@ fn dispatch(
         dumpers,
         rng: &mut sim.rng,
         input,
+        resources: &mut sim.resources,
         tick: sim.tick,
         dt: sim.dt,
     })

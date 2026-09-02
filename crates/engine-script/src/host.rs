@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use engine_core::inspect::ComponentDumper;
 use engine_core::rng::EngineRng;
-use engine_core::{Input, KeyCode};
+use engine_core::{Input, KeyCode, Resources, SoundEvent, SoundEventQueue};
 use engine_scene::ComponentRegistry;
 use mlua::{Lua, LuaOptions, LuaSerdeExt, StdLib};
 use rand::Rng;
@@ -88,7 +88,7 @@ impl ScriptHost {
     /// doesn't hide problems with its siblings.
     pub fn dispatch(
         &mut self,
-        mut ctx: DispatchCtx<'_, '_, '_, '_>,
+        mut ctx: DispatchCtx<'_, '_, '_, '_, '_>,
     ) -> Vec<(hecs::Entity, ScriptError)> {
         let mut targets: Vec<(hecs::Entity, Script)> = ctx
             .world
@@ -109,7 +109,7 @@ impl ScriptHost {
 
     fn dispatch_one(
         &mut self,
-        ctx: &mut DispatchCtx<'_, '_, '_, '_>,
+        ctx: &mut DispatchCtx<'_, '_, '_, '_, '_>,
         entity: hecs::Entity,
         script: &Script,
     ) -> Result<(), ScriptError> {
@@ -156,6 +156,7 @@ impl ScriptHost {
         let self_despawned = Cell::new(false);
         let world_cell = RefCell::new(&mut *ctx.world);
         let rng_cell = RefCell::new(&mut *ctx.rng);
+        let resources_cell = RefCell::new(&mut *ctx.resources);
         let dumpers = ctx.dumpers;
         let self_id = entity.to_bits().get() as f64;
         let lua = &self.lua;
@@ -228,6 +229,21 @@ impl ScriptHost {
                     Ok(input.is_held(key))
                 })?;
                 engine_table.set("key_held", key_held_fn)?;
+
+                let play_sound_fn =
+                    scope.create_function(move |_, (clip, volume): (String, Option<f64>)| {
+                        resources_cell
+                            .borrow_mut()
+                            .get_or_insert_with(SoundEventQueue::default)
+                            .0
+                            .push(SoundEvent {
+                                entity,
+                                clip,
+                                volume: volume.unwrap_or(1.0) as f32,
+                            });
+                        Ok(())
+                    })?;
+                engine_table.set("play_sound", play_sound_fn)?;
 
                 lua.globals().set("engine", engine_table)?;
                 func.call((input_value, ctx.tick, ctx.dt, self_id))
@@ -387,12 +403,17 @@ fn parse_key_name(name: &str) -> Option<KeyCode> {
 
 /// Bundles what `ScriptHost::dispatch` needs from the caller's `Sim` into
 /// one borrow, keeping the method's argument count sane.
-pub struct DispatchCtx<'w, 'd, 'r, 'i> {
+pub struct DispatchCtx<'w, 'd, 'r, 'i, 'e> {
     pub world: &'w mut hecs::World,
     pub components: &'d ComponentRegistry,
     pub dumpers: &'d [ComponentDumper],
     pub rng: &'r mut EngineRng,
     pub input: &'i Input,
+    /// Where `engine.play_sound()` queues its `SoundEvent`s (see
+    /// ADR-0016) — the only reason `DispatchCtx` needs `Resources` access
+    /// at all, since `audio_step` (a system, running before this tick's
+    /// script dispatch) is what actually drains the queue.
+    pub resources: &'e mut Resources,
     pub tick: u64,
     pub dt: f32,
 }

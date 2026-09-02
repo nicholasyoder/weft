@@ -1,4 +1,6 @@
 pub mod assets_dir;
+pub mod audio_events;
+pub mod audio_settings;
 pub mod error;
 pub mod input;
 pub mod inspect;
@@ -10,6 +12,8 @@ pub mod sim;
 pub mod transform;
 
 pub use assets_dir::AssetsDir;
+pub use audio_events::{SoundEvent, SoundEventQueue};
+pub use audio_settings::AudioSettings;
 pub use hecs;
 pub use input::{Input, KeyCode};
 pub use joint_palette::JointPalette;

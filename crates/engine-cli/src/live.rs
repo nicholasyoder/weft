@@ -42,9 +42,28 @@ pub fn play(
     backends: wgpu::Backends,
     max_ticks: Option<u64>,
 ) -> Result<(), CliError> {
-    let (sim, dumpers) = engine_scene::load(scene, seed, components, systems)
+    let (mut sim, dumpers) = engine_scene::load(scene, seed, components, systems)
         .map_err(|e| CliError::from_scene_error(scene, &e))?;
     let host = crate::build_script_host(&sim)?;
+
+    // Opens the real audio device once, up front — doesn't need
+    // `ActiveEventLoop` the way the window does, so there's no need to
+    // wait for `resumed()`. A missing/unavailable device (a real
+    // possibility in a headless sandbox) is not fatal: `kira::backend::
+    // cpal::Error::NoDefaultOutputDevice` is logged and `play` continues
+    // with no `AudioState` inserted at all, so `audio_step` falls back to
+    // its tracking-only default (see ADR-0016) instead of crashing the
+    // whole session over an unrelated audio device.
+    match engine_audio::LiveAudioBackend::new() {
+        Ok(backend) => {
+            sim.resources.insert(engine_audio::AudioState::with_backend(
+                engine_audio::AudioBackend::Live(Box::new(backend)),
+            ));
+        }
+        Err(e) => {
+            eprintln!("warning: no audio device available, continuing with no sound ({e})");
+        }
+    }
 
     let event_loop =
         EventLoop::new().map_err(|e| CliError::play_event_loop_failed(&e.to_string()))?;

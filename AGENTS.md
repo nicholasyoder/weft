@@ -5,7 +5,7 @@ This is the CLI/MCP contract for driving the engine — build it, run it, inspec
 Two equivalent surfaces exist, both thin wrappers over the same `engine_cli` library code (see [ADR-0007](docs/decisions/0007-cli-mcp-code-sharing.md) — there is exactly one implementation of each operation):
 
 - **`engine`**, a CLI binary (`cargo run -p engine-cli --bin engine --`).
-- **`engine-mcp`**, an MCP server over stdio (`cargo run -p engine-mcp --bin engine-mcp`), exposing the same six operations as typed tools for an MCP-aware agent runtime.
+- **`engine-mcp`**, an MCP server over stdio (`cargo run -p engine-mcp --bin engine-mcp`), exposing the same seven operations as typed tools for an MCP-aware agent runtime.
 
 ## Building
 
@@ -15,7 +15,7 @@ cargo build --workspace
 
 `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all -- --check` must all stay clean — every phase in [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) has held to this gate.
 
-## The six operations
+## The seven operations
 
 Each row: CLI subcommand, its args, and the equivalent MCP tool + params. Args not marked required have the CLI's default shown; MCP tool params use the same defaults when omitted.
 
@@ -26,14 +26,17 @@ Each row: CLI subcommand, its args, and the equivalent MCP tool + params. Args n
 | `engine inspect [--scenario \| --scene \| --recording]` | same as `test`, plus `--recording` | `weft_inspect` | `scenario`/`scene`/`recording` (at most one), `seed`, `ticks` |
 | `engine replay <recording>` | `--format` | `weft_replay` | `recording` (required) |
 | `engine render <scene> --to <file.png>` | `--to` (required), `--assets-dir assets`, `--seed 1`, `--ticks 60`, `--width 256`, `--height 256`, `--format` | `weft_render` | `scene`, `to` (both required), `assets_dir`, `seed`, `ticks`, `width`, `height` |
+| `engine mix <scene> --to <file.wav>` | `--to` (required), `--assets-dir assets`, `--seed 1`, `--ticks 60`, `--sample-rate 44100`, `--format` | `weft_mix` | `scene`, `to` (both required), `assets_dir`, `seed`, `ticks`, `sample_rate` |
 | `engine import <file>` | `--assets-dir assets`, `--out <path>` (optional — writes the fragment to a file), `--format` | `weft_import` | `input` (required), `assets_dir` |
 
 Two deliberate differences, not omissions:
 
 - **No `--watch`, no `--format` on the MCP side.** `--watch` is a long-running human/dev-loop feature; MCP tool calls are one-shot request/response. Every MCP tool always returns structured JSON — there's no human-text mode to select.
-- **`weft_import` never writes a file.** The CLI's `--out` is optional convenience for humans; an agent driving `weft_import` already has filesystem tools of its own if it wants the fragment saved. The tool always returns `fragment` (the pasteable scene-text-file snippet) plus `mesh_hash`/`texture_hash` directly in its response.
+- **`weft_import` never writes a file.** The CLI's `--out` is optional convenience for humans; an agent driving `weft_import` already has filesystem tools of its own if it wants the fragment saved. The tool always returns `fragment` (the pasteable scene-text-file snippet) plus `mesh_hash`/`texture_hash`/`font_hash`/`audio_hash` directly in its response.
 
-`run`/`render` only ever take a scene file (no `--scenario`); `test`/`inspect` accept either a built-in scenario name or a scene file, defaulting to the `basic` scenario if neither is given.
+`run`/`render`/`mix` only ever take a scene file (no `--scenario`); `test`/`inspect` accept either a built-in scenario name or a scene file, defaulting to the `basic` scenario if neither is given.
+
+`engine mix`/`weft_mix` never open a real audio device — the same offline/deterministic posture `render`/`weft_render` already has for graphics (see ADR-0016). Only `engine play` (CLI-only, no MCP tool — see below) touches a live device, and does so gracefully: no device available just means no sound, not a crash.
 
 ## Output shape
 

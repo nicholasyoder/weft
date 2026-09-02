@@ -7,6 +7,7 @@ members = [
     "crates/engine-render",
     "crates/engine-physics",
     "crates/engine-anim",
+    "crates/engine-audio",
     "crates/engine-script",
     "crates/engine-cli",
     "crates/engine-mcp",
@@ -43,3 +44,5 @@ rmcp = "3.2"
 tokio = "1"
 rapier3d = "0.35"
 winit = "0.30"
+kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "ogg", "vorbis", "pcm"] }
+hound = "3"

@@ -83,11 +83,15 @@ impl CliError {
         Self::new(source.code(), source.to_string())
     }
 
+    pub fn from_audio_error(source: &engine_audio::AudioError) -> Self {
+        Self::new(source.code(), source.to_string())
+    }
+
     pub fn unsupported_import_extension(path: &std::path::Path, extension: &str) -> Self {
         Self::new(
             "IMPORT_UNSUPPORTED_EXTENSION",
             format!(
-                "don't know how to import '{}': unsupported extension '{extension}' (expected .gltf/.glb, a common image format, or .ttf/.otf)",
+                "don't know how to import '{}': unsupported extension '{extension}' (expected .gltf/.glb, a common image format, .ttf/.otf, or .wav/.ogg)",
                 path.display()
             ),
         )

@@ -1,5 +1,6 @@
 pub mod import;
 pub mod inspect;
+pub mod mix;
 pub mod play;
 pub mod render;
 pub mod replay;

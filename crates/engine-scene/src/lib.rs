@@ -42,6 +42,11 @@ pub fn load(
     })?;
 
     let mut sim = Sim::new(seed, scene.meta.dt.unwrap_or(DEFAULT_DT));
+    sim.resources.insert(engine_core::AudioSettings {
+        master: scene.audio.master,
+        music: scene.audio.music,
+        sfx: scene.audio.sfx,
+    });
 
     for entity in &scene.entities {
         let mut builder = hecs::EntityBuilder::new();

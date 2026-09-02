@@ -1,0 +1,11 @@
+pickup.ogg (originally "pepSound1.ogg")
+
+Created/distributed by Kenney (www.kenney.nl)
+Part of "Kenney's Sound Pack" / Digital Audio, creation date 28-10-2012.
+
+License: Creative Commons Zero (CC0)
+http://creativecommons.org/publicdomain/zero/1.0/
+
+This content is free to use in personal, educational and commercial
+projects. Attribution is not required, but crediting Kenney or
+www.kenney.nl is appreciated.

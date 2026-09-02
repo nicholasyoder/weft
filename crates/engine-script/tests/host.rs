@@ -48,12 +48,14 @@ fn dispatch_calls_the_named_function_and_writes_back_its_result() {
     let registry = registry();
     let mut rng = engine_core::rng::seeded(1);
     let input = engine_core::Input::default();
+    let mut resources = engine_core::Resources::new();
     let errors = host.dispatch(DispatchCtx {
         world: &mut world,
         components: &registry,
         dumpers: DUMPERS,
         rng: &mut rng,
         input: &input,
+        resources: &mut resources,
         tick: 0,
         dt: 1.0 / 60.0,
     });
@@ -107,12 +109,14 @@ fn math_random_is_disabled_not_ambiently_available() {
     let registry = registry();
     let mut rng = engine_core::rng::seeded(1);
     let input = engine_core::Input::default();
+    let mut resources = engine_core::Resources::new();
     let errors = host.dispatch(DispatchCtx {
         world: &mut world,
         components: &registry,
         dumpers: DUMPERS,
         rng: &mut rng,
         input: &input,
+        resources: &mut resources,
         tick: 0,
         dt: 1.0 / 60.0,
     });
@@ -154,12 +158,14 @@ fn dispatch_once_with_input(
     tick: u64,
     input: &engine_core::Input,
 ) -> Vec<(hecs::Entity, ScriptError)> {
+    let mut resources = engine_core::Resources::new();
     host.dispatch(DispatchCtx {
         world,
         components: registry,
         dumpers: DUMPERS,
         rng,
         input,
+        resources: &mut resources,
         tick,
         dt: 1.0 / 60.0,
     })
@@ -431,6 +437,58 @@ fn engine_key_held_observes_the_live_input_a_script_is_dispatched_with() {
     let errors = dispatch_once_with_input(&mut world, &registry, &mut rng, &mut host, 1, &held);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(world.get::<&Counter>(entity).unwrap().value, 1);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn engine_play_sound_queues_a_sound_event_for_audio_step_to_drain() {
+    // ADR-0016: `engine.play_sound` doesn't play anything itself — it just
+    // queues a `SoundEvent` into `Resources`' `SoundEventQueue`, which
+    // `engine-audio`'s `audio_step` (a system, running before the *next*
+    // tick's dispatch) drains. This proves the Lua binding side of that
+    // contract without needing `engine-audio` at all.
+    let dir = std::env::temp_dir().join(format!(
+        "engine-script-test-playsound-{}",
+        std::process::id()
+    ));
+    let path = write_script(
+        &dir,
+        "plays_sound.lua",
+        "function on_tick(components, tick, dt)\n  engine.play_sound(\"abc123\", 0.5)\n  return nil\nend\n",
+    );
+
+    let mut world = hecs::World::new();
+    let entity = world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+    ));
+
+    let registry = registry();
+    let mut host = ScriptHost::new().unwrap();
+    host.load_file(&path).unwrap();
+    let mut rng = engine_core::rng::seeded(1);
+    let mut resources = engine_core::Resources::new();
+    let errors = host.dispatch(DispatchCtx {
+        world: &mut world,
+        components: &registry,
+        dumpers: DUMPERS,
+        rng: &mut rng,
+        input: &engine_core::Input::default(),
+        resources: &mut resources,
+        tick: 0,
+        dt: 1.0 / 60.0,
+    });
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+
+    let queued = &resources.get::<engine_core::SoundEventQueue>().unwrap().0;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].entity, entity);
+    assert_eq!(queued[0].clip, "abc123");
+    assert_eq!(queued[0].volume, 0.5);
 
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -2,7 +2,7 @@
 //! over stdio (not an in-process transport) and drives it with `rmcp`'s own
 //! client machinery, the same "speak the real protocol to a real process"
 //! posture `engine-cli/tests/watch.rs` already uses for `engine run
-//! --watch`. Exercises every one of the six tools once against a fixture
+//! --watch`. Exercises every one of the seven tools once against a fixture
 //! (reusing `engine-cli`'s own fixtures rather than duplicating them) plus
 //! one deliberately bad input, turning Phase 5's own DoD — "an agent can
 //! build a trivial scene, run it, inspect its state, and diagnose a
@@ -17,6 +17,15 @@ use tokio::process::Command;
 
 const RUN_SCENE: &str = "../engine-cli/tests/fixtures/scenes/basic.toml";
 const RENDER_SCENE: &str = "../engine-cli/tests/fixtures/scenes/render_basic.toml";
+// Deliberately the no-`Script` mix fixture: `Script.path` has no
+// scene-relative resolution (it's resolved against the *process*'s CWD),
+// so a scripted fixture would only work from `engine-cli`'s own CWD, not
+// this crate's — see `games/sandbox/src/main.rs`'s doc comment for the
+// same gotcha in a different caller. `engine-cli/tests/mix.rs` already
+// covers the scripted one-shot path from its own CWD; this only needs to
+// prove `weft_mix` itself works end-to-end.
+const MIX_SCENE: &str = "../engine-cli/tests/fixtures/scenes/mix_no_script.toml";
+const MIX_ASSETS_DIR: &str = "../engine-cli/tests/fixtures/assets";
 const RECORDING: &str = "../engine-cli/tests/fixtures/basic.json";
 const GLTF: &str = "../engine-cli/tests/fixtures/gltf/box_textured.gltf";
 
@@ -101,6 +110,23 @@ async fn every_tool_succeeds_against_a_fixture() {
     assert_eq!(render.structured_content.unwrap()["status"], "ok");
     assert!(render_to.exists(), "weft_render should have written a PNG");
     std::fs::remove_file(&render_to).ok();
+
+    let mix_to = scratch_path("mix.wav");
+    let mix = client
+        .call_tool(
+            CallToolRequestParams::new("weft_mix").with_arguments(args(json!({
+                "scene": MIX_SCENE,
+                "to": mix_to.to_str().unwrap(),
+                "assets_dir": MIX_ASSETS_DIR,
+                "ticks": 10,
+            }))),
+        )
+        .await
+        .unwrap();
+    assert_ne!(mix.is_error, Some(true), "weft_mix: {mix:?}");
+    assert_eq!(mix.structured_content.unwrap()["status"], "ok");
+    assert!(mix_to.exists(), "weft_mix should have written a WAV file");
+    std::fs::remove_file(&mix_to).ok();
 
     let import_assets_dir = scratch_path("import-assets");
     let import = client

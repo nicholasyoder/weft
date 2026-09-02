@@ -56,7 +56,14 @@ impl SimSource {
         let (mut sim, dumpers) = match self {
             SimSource::Scenario(name) => {
                 let s = scenarios::find(name).ok_or_else(|| CliError::unknown_scenario(name))?;
-                ((s.build)(seed), s.dumpers.to_vec())
+                let mut sim = (s.build)(seed);
+                // A hardcoded scenario never goes through `engine_scene::load`
+                // (there's no `[audio]` table to read), so it wouldn't
+                // otherwise get an `AudioSettings` at all — every `Sim`
+                // carries one regardless of source, same reasoning as
+                // `AssetsDir` below (see ADR-0016).
+                sim.resources.insert(engine_core::AudioSettings::default());
+                (sim, s.dumpers.to_vec())
             }
             SimSource::Scene(path) => {
                 engine_scene::load(path, seed, &registry::components(), &registry::systems())
@@ -148,6 +155,7 @@ pub(crate) fn step_and_dispatch_with_input(
             dumpers,
             rng: &mut sim.rng,
             input,
+            resources: &mut sim.resources,
             tick: sim.tick,
             dt: sim.dt,
         });
@@ -290,6 +298,46 @@ pub fn render_scene(
         .map_err(|e| CliError::from_render_error(&e))
 }
 
+/// Builds `scene`, runs it for `ticks` ticks, and writes the resulting
+/// audio mixdown to a WAV file at `to` — audio's equivalent of
+/// `render_scene`, but structurally different in one load-bearing way:
+/// audio unfolds *across* the whole run (looping music from tick 0, a
+/// one-shot at an arbitrary tick), so the `Mixdown` renders `dt` seconds
+/// of samples every tick, interleaved with `step_and_dispatch`, rather
+/// than deferring to a single snapshot at the end the way `render_scene`
+/// does (see ADR-0016). The one place scene build + run + mixdown-write
+/// are joined, so both the `engine mix` CLI command and `engine-mcp`'s
+/// `weft_mix` tool share this path (see ADR-0007).
+#[allow(clippy::too_many_arguments)]
+pub fn mix_scene(
+    scene: &Path,
+    seed: u64,
+    ticks: u64,
+    sample_rate: u32,
+    assets_dir: &Path,
+    to: &Path,
+) -> Result<(), CliError> {
+    let (mut sim, dumpers, mut host) =
+        SimSource::Scene(scene.to_path_buf()).build_with_scripts(seed, assets_dir)?;
+    sim.resources.insert(engine_audio::AudioState::with_backend(
+        engine_audio::AudioBackend::Mix(engine_audio::Mixdown::new(sample_rate)),
+    ));
+    let components = registry::components();
+    for _ in 0..ticks {
+        step_and_dispatch(&mut sim, &dumpers, host.as_mut(), &components)?;
+    }
+    let state = sim
+        .resources
+        .get::<engine_audio::AudioState>()
+        .expect("inserted immediately above, before any tick could remove it");
+    match &state.backend {
+        Some(engine_audio::AudioBackend::Mix(mixdown)) => mixdown
+            .write_wav(to)
+            .map_err(|e| CliError::from_audio_error(&e)),
+        _ => unreachable!("mix_scene always inserts a Mix backend before ticking"),
+    }
+}
+
 /// The result of importing one file into the content-addressed asset
 /// store: a pasteable scene-text-file fragment plus the content hash(es) it
 /// references, for a caller (an MCP tool, say) that wants the hashes
@@ -302,6 +350,7 @@ pub struct ImportResult {
     pub skin_hash: Option<String>,
     pub skeleton_hash: Option<String>,
     pub clip_hash: Option<String>,
+    pub audio_hash: Option<String>,
 }
 
 /// Converts `input` (a glTF file, a loose image file, or a font file) into
@@ -329,6 +378,7 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 skin_hash: imported.skin_hash.clone(),
                 skeleton_hash: imported.skeleton_hash.clone(),
                 clip_hash: imported.clip_hash.clone(),
+                audio_hash: None,
             })
         }
         "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tga" | "webp" => {
@@ -342,6 +392,7 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 skin_hash: None,
                 skeleton_hash: None,
                 clip_hash: None,
+                audio_hash: None,
             })
         }
         "ttf" | "otf" => {
@@ -355,6 +406,21 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 skin_hash: None,
                 skeleton_hash: None,
                 clip_hash: None,
+                audio_hash: None,
+            })
+        }
+        "wav" | "ogg" => {
+            let hash = engine_assets::import_audio(input, &store)
+                .map_err(|e| CliError::from_asset_error(&e))?;
+            Ok(ImportResult {
+                fragment: commands::import::audio_fragment(&hash),
+                mesh_hash: None,
+                texture_hash: None,
+                font_hash: None,
+                skin_hash: None,
+                skeleton_hash: None,
+                clip_hash: None,
+                audio_hash: Some(hash),
             })
         }
         other => Err(CliError::unsupported_import_extension(input, other)),

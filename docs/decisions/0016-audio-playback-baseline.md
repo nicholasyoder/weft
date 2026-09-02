@@ -1,0 +1,66 @@
+# ADR-0016: Audio playback baseline
+
+- **Status**: accepted
+- **Date**: 2026-09-01
+
+## Context
+
+Tier 1's capability audit named audio the last foundational gap: zero audio code existed anywhere in the workspace (no crate, no dependency). The user picked this item explicitly over three other candidates (multi-mesh asset import, the physics gameplay substrate, and PBR materials/lighting — all Tier 2). Scope, per the tier doc: one-shot SFX, looping music, a minimal master/music/sfx mixer, and a wav/ogg import path in `engine-assets` mirroring the existing glTF/image/font importers. Spatial/3D audio, real-time fades, dynamic music layering, and streaming large files are explicitly out — Tier 2+.
+
+The design goal that shaped everything below: mirror the **offscreen-vs-live split** rendering already established (ADR-0004 for headless rendering, ADR-0010 for the live windowed loop) — a deterministic, headless, CI-safe path with no real device (audio's equivalent of `engine render ... --to file.png`), and a separate live-device path used only by `engine play`.
+
+**The constraint that reshaped the implementation mid-flight**: the original plan was to use `kira`'s `MockBackend` (a backend that "does not connect to any lower-level audio APIs, but allows manually calling `Renderer::on_start_processing`/`Renderer::process`") to drive the offline path with the exact same mixing code the live path uses. A throwaway spike (`cargo add kira`, decode + render + inspect samples) found `MockBackend::process` writes into a private `frames: Vec<f32>` field with no public accessor at all — it exists for testing/benchmarking that the pipeline doesn't panic under load, not for capturing output samples. There is no way to pull rendered PCM out of it through kira's public API.
+
+## Decision
+
+**Split decode from mixing, not live from offline.** `kira::sound::static_sound::StaticSoundData::from_cursor`/`from_file` is a fully public, standalone decoder (`symphonia`-backed, pure Rust — no system codec libraries) that returns `{ sample_rate: u32, frames: Arc<[Frame]> }` with no `AudioManager`/`Backend` involved at all. This is used as the *one* decode step for both paths. From there:
+- **Live path (`engine play`)**: a real `kira::AudioManager<CpalBackend>` plays the decoded `StaticSoundData` directly — full use of kira's mature real-time engine (device I/O, resampling, track-based mixing).
+- **Offline path (`engine mix`)**: a small hand-rolled `Mixdown` (in `engine-audio`) takes the same decoded `frames`/`sample_rate` and does its own linear-interpolation-resampled voice summing, entirely bypassing kira's runtime. Pure arithmetic, so `engine mix` run twice with the same seed/ticks produces byte-identical WAV output — verified by a dedicated regression test, not assumed.
+
+This is a deliberate change from the plan approved before the spike (which expected `MockBackend` to unify the two paths' *mixing* code, not just their *decode* code) — recorded here rather than silently drifting from what was agreed.
+
+**Raw-bytes-verbatim import**, mirroring `import_font` (ADR-0014) rather than `import_texture`'s decode-at-import-time shape: `engine_assets::import_audio` content-addresses a wav/ogg file's bytes unchanged. No parsing at import time — `engine-audio` decodes lazily, at clip-cache time, exactly like `engine-render` decodes fonts lazily at draw time.
+
+**Two trigger mechanisms, not one generalized "audio event" abstraction** — matching the tier doc's own framing ("one-shot SFX... looping music," two verbs):
+- **`AudioSource` component** (`clip`/`playing`/`looping`/`volume`) for scene-authored, steady-state looping audio (background music). Started once per entity, the first tick it's seen with `playing == true` (mirrors `engine_anim::Animator`'s shape).
+- **`engine.play_sound(clip, volume)` Lua binding**, mirroring `engine.despawn()`'s shape, for one-shot SFX. Required giving `engine_script::DispatchCtx` a new `resources: &mut Resources` field (it previously had none) so the binding can queue a `SoundEvent` somewhere `audio_step` — a system, which only runs *before* that tick's script dispatch — can find it on the *next* tick. **This is a real, accepted one-tick latency** between `engine.play_sound()` and its audible effect, the same category of lag `games/sandbox`'s `hud_system` already accepts for post-physics reads.
+
+**`SoundEvent`/`SoundEventQueue`/`AudioSettings` live in `engine_core`**, not `engine-script`/`engine-audio`/`engine-scene` — the same "producer and consumer need a shared ancestor crate" reasoning ADR-0015 used for `JointPalette`: `engine-script` writes the queue, `engine-audio` reads it; `engine-scene` populates `AudioSettings` from a scene's `[audio]` table, `engine-audio` reads it.
+
+**`[audio]` is a fourth top-level scene-format table**, alongside `meta`/`entity`/`system`, added now rather than deferred to a Rust-only default — `master`/`music`/`sfx` volumes, each defaulting to `1.0` so every existing `.toml` scene keeps working unchanged. The cost delta versus a Rust-only `Resources` default was a few lines (mirroring `Meta`'s exact shape), not worth a second migration later.
+
+**`audio_step` (new `crates/engine-audio`) is registered into `SystemRegistry` as `"audio"`, not auto-run** — a scene must list `[[system]] name = "audio"` to get it, the same explicit-opt-in convention `"physics"`/`"animation"` already use (only script dispatch is automatic). Responsibilities, every tick: drain `SoundEventQueue`; write/clear a dumpable `SoundsPlayed { clips }` component per entity **unconditionally**, regardless of whether a real backend exists — this is what lets batch commands (`test`/`inspect`/`run`/`replay`) observe "which sounds fired" without ever opening a device; start any not-yet-started `AudioSource`; evict despawned entities' tracked voices (mirrors `engine-physics`'s `evict_despawned`, ADR-0011); and, if the active backend is the offline `Mixdown`, render that tick's `dt` worth of samples.
+
+**One `AudioState` resource, not two**, holds `backend: Option<AudioBackend>` (`pub`, mirroring `engine-physics::PhysicsState`'s public-`world`/private-`bodies` shape) plus a private decode/started-tracking cache. `AudioBackend` is a two-variant enum (`Live(Box<LiveAudioBackend>)` / `Mix(Mixdown)`), not two separate `Resources` entries checked independently — only one is ever live for a given `Sim`, so an enum expresses "exactly one of these, or none" more directly than juggling two optional slots, and avoids `Resources`' single-mutable-borrow-per-type limitation (there is no way to hold `&mut TypeA` and `&mut TypeB` from the same `&mut Resources` simultaneously without one combined entry). Batch commands never insert an `AudioState` at all — `audio_step`'s `get_or_insert_with` lazily creates one with `backend: None`, so `audio_step` always takes its tracking-only branch there.
+
+**`engine mix <scene> --to <file.wav>`**, audio's equivalent of `engine render ... --to file.png` — no real device, deterministic, golden-WAV-testable, exposed as a 7th MCP tool `weft_mix`. **Structural difference from `render`, not an oversight**: audio unfolds *across* the whole run (looping music from tick 0, a one-shot at an arbitrary tick), so `Mixdown::render(dt)` is called once per tick, interleaved with `step_and_dispatch` inside `audio_step` itself — not deferred to a single snapshot at the end the way `render_scene` runs the full tick budget first and renders once.
+
+**`engine play` opens a live `AudioManager<CpalBackend>` once, up front** (`live::play`, before the event loop starts — doesn't need `ActiveEventLoop` the way the window does). **A missing/unavailable device is not fatal**: `kira::backend::cpal::Error::NoDefaultOutputDevice` (a real, confirmed outcome in this sandbox — no ALSA device exists here) is logged to stderr and `play` continues with no `AudioState` inserted at all, falling back to the same tracking-only behavior batch commands get. Verified directly: `cargo run -p sandbox` in this sandbox prints the warning and exits cleanly (code 0) after `--max-ticks`, never crashing over an unrelated audio device.
+
+**Volume**: kira's API takes `Decibels`, not a linear scale; `engine-audio::backend::linear_to_decibels` converts once, at the point a volume actually reaches kira. `audio_step` pre-multiplies `AudioSettings.master * .sfx` (one-shots) or `.master * .music` (loops) into each sound's own volume before it ever reaches either backend — one shared formula, not a separate per-backend track-volume mechanism (kira's sub-tracks exist for possible future routing/effects, not group volume in this MVP).
+
+**`games/sandbox` proof, narrowed by design, not oversight**: `pickup.lua` now fires `engine.play_sound` immediately before `engine.despawn()`, using a real vendored CC0 sound effect (`assets-src/pickup.ogg`, via Kenney, downloaded the same way Phase 12 vendored a real font rather than a synthetic fixture — outbound network access confirmed reachable). A looping-music proof was deliberately **not** forced into `playground.toml` — the sandbox has no natural ambient-music moment yet, and the short pickup blip isn't a fit for that role; the looping `AudioSource` mechanism is instead proven via `engine-cli`'s own golden-WAV test and `engine-audio`'s unit tests, which is adequate coverage without inventing an artificial in-game use.
+
+## Alternatives considered
+
+- **`kira::MockBackend` driving both paths' mixing code** (the original plan). Rejected once the spike showed it exposes no way to read rendered samples back out — see "Context" above.
+- **`rodio` + a hand-rolled offline mixer, kira for live only.** Would still need a second, separate decode implementation (rodio's own `Decoder`) from whatever the live path uses — worse than the chosen split, which shares one decode step (`StaticSoundData`) between both paths and only diverges at the mixing stage.
+- **Hand-rolling decode too** (`symphonia`/`lewton` directly, bypassing kira entirely for the offline path). Rejected: `StaticSoundData::from_cursor` already wraps exactly this (pure-Rust, no new codec-ecosystem dependency) and is what the live path uses internally anyway — reimplementing it would only reintroduce the "two decode implementations" risk this decision explicitly avoids.
+- **Two separate `Resources` entries for cache and backend** instead of one `AudioState`. Rejected: `Resources::get_mut::<T>()` can't yield two disjoint mutable borrows of different types from one `&mut Resources` simultaneously; one entry with named fields sidesteps this the same way `Sim`'s own `world`/`rng`/`resources` fields do.
+- **Folding `AudioSettings` group volume into a scene-authored per-entity component** instead of a scene-format `[audio]` table. Rejected: master/music/sfx are properties of the whole mix, not any one entity — a global table matches `[meta]`'s existing precedent for scene-wide (not per-entity) settings.
+- **Letting `AudioSource.playing` toggle pause/resume after the initial start.** Deliberately out of scope for this MVP — `audio_step` only ever asks "has this entity started yet," never revisits a started entity's `playing` value again. A real pause/resume need should drive that design, not a speculative one built now.
+
+## Consequences
+
+- New `crates/engine-audio` crate (mirrors `engine-physics`/`engine-anim`'s "dedicated crate off `engine-core`/`engine-assets`" shape); `engine-core` gained `AudioSettings`/`SoundEvent`/`SoundEventQueue`; `engine-scene`'s format gained its first non-`meta` global table; `engine-script::DispatchCtx` gained a `resources` field, touching every existing direct construction site (three test files) even though only one new binding needed it.
+- `engine mix`/`weft_mix` is the 7th CLI/MCP operation — `AGENTS.md`'s "six operations" table and `engine-mcp`'s tool-count doc comments both updated.
+- This sandbox needed `sudo apt-get install -y libasound2-dev` for `cpal`'s ALSA backend to even *compile* (a real system-dependency environment note, same category as the `mesa-vulkan-drivers`/`xvfb`/Blender-`numpy` notes from earlier phases) — but explicitly did **not** need `libdbus-1-dev`/RTKit, since kira's default `cpal-realtime`/`cpal-realtime-dbus` features (real-time thread-priority negotiation, not needed here) were disabled via `default-features = false` in the workspace dependency.
+- `AudioSource.playing` only gates the *initial* start, not pause/resume after — a real but narrow, documented scope limit (see "Alternatives considered").
+
+## Revisit when
+
+- A game needs spatial/3D audio (panning, distance attenuation, listener orientation) — kira has this built in (`add_spatial_sub_track`/`add_listener`); this phase never touches it.
+- Pause/resume-after-start, real-time volume fades/crossfades, or dynamic music layering become a concrete need.
+- A file large enough that `StaticSoundData`'s whole-file-in-memory decode becomes a real cost — kira's `StreamingSoundData` exists for this and was out of scope here.
+- The one-tick `engine.play_sound` latency ever becomes audible/matters at something other than 60Hz.
+- `games/sandbox` gets a real moment for looping ambient music (a title screen, a level with sustained atmosphere) — wire `AudioSource` in then, rather than forcing an artificial proof now.

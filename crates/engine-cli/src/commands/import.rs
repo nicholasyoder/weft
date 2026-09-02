@@ -77,3 +77,10 @@ pub(crate) fn font_fragment(hash: &str) -> String {
         "# Paste into an existing entity's [entity.components.Text] block:\nfont = \"{hash}\"\n"
     )
 }
+
+pub(crate) fn audio_fragment(hash: &str) -> String {
+    format!(
+        "# Paste as a new entity's [entity.components.AudioSource] block, \
+         or use \"{hash}\" directly in a scripted engine.play_sound() call:\nclip = \"{hash}\"\n"
+    )
+}

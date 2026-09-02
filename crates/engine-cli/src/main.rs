@@ -85,8 +85,27 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
-    /// Convert a glTF file or a loose image file into the content-addressed
-    /// asset store, emitting a scene-text-file fragment ready to paste in.
+    /// Load a scene file, run it for N ticks, and write the resulting audio
+    /// mixdown to a WAV file. No real audio device required — audio's
+    /// equivalent of `render` (see ADR-0016).
+    Mix {
+        scene: PathBuf,
+        #[arg(long)]
+        to: PathBuf,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value_t = 60)]
+        ticks: u64,
+        #[arg(long, default_value_t = 44100)]
+        sample_rate: u32,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+    },
+    /// Convert a glTF file, a loose image file, a font, or an audio file
+    /// into the content-addressed asset store, emitting a scene-text-file
+    /// fragment ready to paste in.
     Import {
         input: PathBuf,
         #[arg(long, default_value = "assets")]
@@ -165,6 +184,15 @@ fn main() -> ExitCode {
             height,
             format,
         } => commands::render::run(&scene, &to, &assets_dir, seed, ticks, width, height, format),
+        Command::Mix {
+            scene,
+            to,
+            assets_dir,
+            seed,
+            ticks,
+            sample_rate,
+            format,
+        } => commands::mix::run(&scene, &to, &assets_dir, seed, ticks, sample_rate, format),
         Command::Play {
             scene,
             seed,

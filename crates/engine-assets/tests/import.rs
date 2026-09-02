@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use engine_assets::{
-    animation, import_font, import_gltf, import_texture, mesh, skeleton, skin, AssetStore,
+    animation, import_audio, import_font, import_gltf, import_texture, mesh, skeleton, skin,
+    AssetStore,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -216,6 +217,35 @@ fn importing_a_font_stores_its_bytes_verbatim() {
     assert_eq!(
         stored, original,
         "font import shouldn't transform the bytes at all — that's engine-render's job, at draw time"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_an_audio_file_twice_produces_the_same_hash_and_no_new_files() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let first = import_audio(&fixture("sample.wav"), &store).unwrap();
+    assert_eq!(count_files(&dir), 1);
+    let second = import_audio(&fixture("sample.wav"), &store).unwrap();
+    assert_eq!(
+        first, second,
+        "re-importing an unchanged audio file should be a no-op"
+    );
+    assert_eq!(count_files(&dir), 1);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_an_audio_file_stores_its_bytes_verbatim() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let original = std::fs::read(fixture("sample.wav")).unwrap();
+    let hash = import_audio(&fixture("sample.wav"), &store).unwrap();
+    let stored = store.get(&hash).unwrap();
+    assert_eq!(
+        stored, original,
+        "audio import shouldn't transform the bytes at all — that's engine-audio's job, at play/mix time"
     );
     std::fs::remove_dir_all(&dir).ok();
 }

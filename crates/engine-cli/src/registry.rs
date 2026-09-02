@@ -5,6 +5,7 @@
 //! hardcoded scenarios, and rendering share component definitions.
 
 use engine_anim::{animation_step, Animator, JointPalette};
+use engine_audio::{audio_step, AudioSource, SoundsPlayed};
 use engine_core::Transform;
 use engine_physics::{physics_step, Collider, RigidBody};
 use engine_render::{Camera, Material, MeshRef, Text};
@@ -171,6 +172,36 @@ fn dump_joint_palette(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::
         .map(|p| ("JointPalette", serde_json::to_value((*p).clone()).unwrap()))
 }
 
+fn load_audio_source(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<AudioSource>(v)?);
+    Ok(())
+}
+
+fn dump_audio_source(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&AudioSource>()
+        .map(|a| ("AudioSource", serde_json::to_value((*a).clone()).unwrap()))
+}
+
+/// `SoundsPlayed` is computed by `audio_step` every tick, never
+/// hand-authored — registered with a real loader anyway, same "harmless
+/// scene-authored initial value, overwritten next tick" posture
+/// `JointPalette` established (ADR-0015).
+fn load_sounds_played(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<SoundsPlayed>(v)?);
+    Ok(())
+}
+
+fn dump_sounds_played(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&SoundsPlayed>()
+        .map(|s| ("SoundsPlayed", serde_json::to_value((*s).clone()).unwrap()))
+}
+
 pub fn components() -> ComponentRegistry {
     let mut registry = ComponentRegistry::new();
     registry.register("Position", load_position, dump_position);
@@ -187,6 +218,8 @@ pub fn components() -> ComponentRegistry {
     registry.register("Fuse", load_fuse, dump_fuse);
     registry.register("Animator", load_animator, dump_animator);
     registry.register("JointPalette", load_joint_palette, dump_joint_palette);
+    registry.register("AudioSource", load_audio_source, dump_audio_source);
+    registry.register("SoundsPlayed", load_sounds_played, dump_sounds_played);
     registry
 }
 
@@ -196,5 +229,6 @@ pub fn systems() -> SystemRegistry {
     registry.register("physics", physics_step);
     registry.register("despawn-after", despawn_after_system);
     registry.register("animation", animation_step);
+    registry.register("audio", audio_step);
     registry
 }

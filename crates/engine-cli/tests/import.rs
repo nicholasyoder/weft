@@ -100,6 +100,32 @@ fn reimporting_the_same_file_produces_no_spurious_diff_or_churn() {
 }
 
 #[test]
+fn importing_an_audio_file_emits_a_pasteable_scene_fragment() {
+    let dir = scratch_dir();
+    let assets_dir = dir.join("assets");
+    let out = dir.join("fragment.toml");
+
+    Command::cargo_bin("engine")
+        .unwrap()
+        .args([
+            "import",
+            "../engine-assets/tests/fixtures/sample.wav",
+            "--assets-dir",
+            assets_dir.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let fragment = std::fs::read_to_string(&out).unwrap();
+    assert!(fragment.contains("[entity.components.AudioSource]"));
+    assert!(fragment.contains("clip = \""));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn importing_an_unsupported_extension_is_a_structured_error() {
     let dir = scratch_dir();
     Command::cargo_bin("engine")

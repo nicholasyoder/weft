@@ -15,7 +15,10 @@
 # any scene with a Script component gets one, no [[system]] entry needed.
 # "hud" runs last so it counts each tick's despawns with the least possible
 # lag (still one tick behind script dispatch, which itself runs after every
-# [[system]] here — see hud_system's doc comment).
+# [[system]] here — see hud_system's doc comment). "audio" (ADR-0016) drains
+# each tick's engine.play_sound calls from the previous tick's script
+# dispatch — pickup.lua fires one the same tick it despawns a pickup, so a
+# collect always has an audible confirmation.
 
 [[entity]]
 name = "ground"
@@ -223,3 +226,5 @@ name = "physics"
 name = "camera_follow"
 [[system]]
 name = "hud"
+[[system]]
+name = "audio"
