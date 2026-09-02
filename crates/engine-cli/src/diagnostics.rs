@@ -83,6 +83,24 @@ impl CliError {
         Self::new(source.code(), source.to_string())
     }
 
+    /// Like `from_script_error`, but for `ScriptHost::dispatch`'s result —
+    /// which deliberately collects *every* per-entity error in a tick
+    /// rather than stopping at the first (see its own doc comment). The
+    /// primary `code`/`message` come from the first error (unchanged
+    /// behavior for the common single-error case), but every error is
+    /// listed in `context` so a second (or third...) bad script isn't
+    /// silently dropped on the floor — `errors` must be non-empty.
+    pub fn from_script_errors(errors: &[(hecs::Entity, engine_script::ScriptError)]) -> Self {
+        let (_, first) = &errors[0];
+        Self::from_script_error(first).with_context(serde_json::json!({
+            "errors": errors.iter().map(|(entity, e)| serde_json::json!({
+                "entity": format!("{entity:?}"),
+                "code": e.code(),
+                "message": e.to_string(),
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
     pub fn from_audio_error(source: &engine_audio::AudioError) -> Self {
         Self::new(source.code(), source.to_string())
     }

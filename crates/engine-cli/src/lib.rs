@@ -119,12 +119,14 @@ pub(crate) fn build_script_host(sim: &Sim) -> Result<Option<ScriptHost>, CliErro
 }
 
 /// Advances `sim` by one tick, then — if `host` is present — dispatches
-/// every `Script`-tagged entity's function once. The first dispatch error
-/// (if any) becomes a hard `CliError`, the same failure posture as any other
-/// bad scene: `test`/`run`/`replay` are meant to fail loudly, not limp on
-/// with partially-applied script output. `watch` mode (see `watch.rs`)
-/// handles the "don't crash on a bad edit" requirement at a different
-/// layer, by catching this `Err` per rerun instead of suppressing it here.
+/// every `Script`-tagged entity's function once. Any dispatch errors (there
+/// may be more than one — `ScriptHost::dispatch` deliberately doesn't stop
+/// at the first) become a hard `CliError` via `from_script_errors`, the same
+/// failure posture as any other bad scene: `test`/`run`/`replay` are meant
+/// to fail loudly, not limp on with partially-applied script output.
+/// `watch` mode (see `watch.rs`) handles the "don't crash on a bad edit"
+/// requirement at a different layer, by catching this `Err` per rerun
+/// instead of suppressing it here.
 pub(crate) fn step_and_dispatch(
     sim: &mut Sim,
     dumpers: &[ComponentDumper],
@@ -160,8 +162,8 @@ pub(crate) fn step_and_dispatch_with_input(
             tick: sim.tick,
             dt: sim.dt,
         });
-        if let Some((_, e)) = errors.into_iter().next() {
-            return Err(CliError::from_script_error(&e));
+        if !errors.is_empty() {
+            return Err(CliError::from_script_errors(&errors));
         }
     }
     Ok(())

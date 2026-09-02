@@ -84,6 +84,27 @@ fn scene_with_dangling_script_reference_is_a_structured_error_without_watch() {
     );
 }
 
+/// Regression test for known-issues.md's "multi-script dispatch errors are
+/// collected, then thrown away": `ScriptHost::dispatch` deliberately
+/// gathers every per-entity error in a tick so one bad script doesn't hide
+/// another's failure, but `step_and_dispatch_with_input` used to keep only
+/// the first (`errors.into_iter().next()`). Both entities in this fixture
+/// call an undefined function, so both errors must survive into the
+/// envelope's `context.errors`, not just one.
+#[test]
+fn two_failing_scripts_in_the_same_tick_both_surface_in_the_error_context() {
+    let value = json_error(&["run", "tests/fixtures/scenes/two_broken_scripts.toml"]);
+    assert_eq!(value["error"]["code"], "SCRIPT_UNKNOWN_FUNCTION");
+    let errors = value["error"]["context"]["errors"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected context.errors to be an array: {value}"));
+    assert_eq!(
+        errors.len(),
+        2,
+        "expected both broken_a's and broken_b's script errors, got: {value}"
+    );
+}
+
 #[test]
 fn ambiguous_recording_source_is_a_structured_error() {
     assert_error_code(
