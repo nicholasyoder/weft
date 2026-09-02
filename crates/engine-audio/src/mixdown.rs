@@ -39,6 +39,13 @@ pub struct Mixdown {
     samples: Vec<Frame>,
     voices: Vec<Voice>,
     next_voice_id: u64,
+    /// Fractional output-frame count left over from the last `render`
+    /// call, carried into the next one — without this, rounding
+    /// `dt * sample_rate` independently per call drifts the total frame
+    /// count away from `elapsed_time * sample_rate` whenever `sample_rate`
+    /// doesn't evenly divide the tick rate (true of this crate's own
+    /// golden-WAV fixture, 8000Hz @ 60Hz).
+    frame_accum: f64,
 }
 
 impl Mixdown {
@@ -48,6 +55,7 @@ impl Mixdown {
             samples: Vec::new(),
             voices: Vec::new(),
             next_voice_id: 0,
+            frame_accum: 0.0,
         }
     }
 
@@ -88,7 +96,16 @@ impl Mixdown {
     /// advancing (or, for a finished non-looping voice, removing) every
     /// active voice.
     pub fn render(&mut self, dt: f32) {
-        let frame_count = ((dt as f64) * self.sample_rate as f64).round() as usize;
+        // The tiny epsilon before `floor` absorbs `dt`'s own f32->f64
+        // promotion error (e.g. `0.01f32 as f64` is a hair under `0.01`) —
+        // without it, a `dt`/`sample_rate` pair that's supposed to land on
+        // a whole frame count (like the unit tests below deliberately use)
+        // would floor one frame short essentially every time, which
+        // `.round()`'s old per-call behavior happened to paper over.
+        const EPSILON: f64 = 1e-6;
+        self.frame_accum += dt as f64 * self.sample_rate as f64;
+        let frame_count = (self.frame_accum + EPSILON).floor() as usize;
+        self.frame_accum -= frame_count as f64;
         for _ in 0..frame_count {
             let mut mixed = Frame::ZERO;
             self.voices.retain_mut(|voice| {
@@ -272,5 +289,22 @@ mod tests {
             .map(|f| (f.left.to_bits(), f.right.to_bits()))
             .collect();
         assert_eq!(a, b);
+    }
+
+    /// Regression test for known-issues.md's "no carried fractional
+    /// remainder" bug: at 8000Hz/60Hz (this crate's own golden-WAV
+    /// fixture rate — 8000.0 / 60.0 = 133.33... frames/tick, not a whole
+    /// number), rendering many ticks independently used to round each
+    /// tick's frame count on its own and drift away from the true
+    /// elapsed-time frame count. 600 ticks of 1/60s at 8000Hz is exactly
+    /// 10 seconds — 80000 frames — a boundary naive per-tick rounding
+    /// would very likely miss.
+    #[test]
+    fn many_ticks_track_elapsed_time_without_drift() {
+        let mut mix = Mixdown::new(8000);
+        for _ in 0..600 {
+            mix.render(1.0 / 60.0);
+        }
+        assert_eq!(mix.samples().len(), 80000);
     }
 }
