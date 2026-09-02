@@ -1,5 +1,4 @@
 pub mod components;
-pub mod convert;
 pub mod system;
 
 pub use components::{BodyType, Collider, ColliderShape, RigidBody};

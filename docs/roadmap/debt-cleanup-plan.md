@@ -2,7 +2,7 @@
 
 **Working checklist, not a spec — same living-document rule as the rest of `docs/roadmap/`.** Addresses the 9 "Architectural debt" items and 4 "Process / testing gaps" items in [`known-issues.md`](known-issues.md) (the 3 Critical items and 5 Real bugs from the same 2026-09-02 review are already fixed). Split into 8 independent phases so risk stays contained — each phase should land as its own reviewable, tested commit-set, with the same gate every phase in this project uses: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, all clean before committing.
 
-**Status: Phases 1, 2, 3, 4, 6, and 7 done (2026-09-02).** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
+**Status: Phases 1, 2, 3, 4, 5, 6, and 7 done (2026-09-02).** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
 
 Research behind this plan (three parallel codebase surveys) found the roadmap text itself had drifted in two places, corrected in Phase 1: only 1 of 4 scenarios (not 2) actually lacks a scene-file counterpart, and `engine-anim`'s error-handling "fork" bullet mis-described its current shape — `engine-anim` no longer panics (fixed by the earlier Critical-item work), but it still doesn't own a `thiserror`-based error type the way `engine-scene`/`engine-render`/`engine-audio`/`engine-assets`/`engine-script` each do; it converts a foreign `engine_assets::AssetError` into `SystemError` via a small local helper instead. Not a fixed instance of the same convention — a different, arguably fine design with nothing of its own left to convert.
 
@@ -64,7 +64,7 @@ Three `RenderPipelineDescriptor` blocks (`pipeline_for`, `skinned_pipeline_for`,
 
 ---
 
-## Phase 5 — Align the workspace's `glam` pin to 0.33 and simplify `engine-physics/convert.rs`
+## Phase 5 — Align the workspace's `glam` pin to 0.33 and simplify `engine-physics/convert.rs` — DONE (2026-09-02)
 
 Two `glam` versions are active today: `0.29.3` (workspace pin) and `0.33.6` (pulled transitively via `rapier3d`→`parry3d`→`glamx`, and `nalgebra`'s `glam033` conversion feature — confirmed active via `cargo tree`). Cargo.lock also carries 3 unused stale glam entries (0.30.10/0.31.1/0.32.1 — confirmed nothing in the workspace resolution depends on them).
 
@@ -75,6 +75,8 @@ Two `glam` versions are active today: `0.29.3` (workspace pin) and `0.33.6` (pul
 - Spot-check golden image/WAV fixtures aren't affected (expect zero change, but verify rather than assume).
 
 **Verify**: full gate, plus explicit attention to `engine-cli/tests/render.rs` and `engine-cli/tests/physics.rs`/`determinism.rs` since this phase touches the math layer under physics.
+
+*(In practice: `rapier3d::math::Vector`/`Rotation` turned out not to be `nalgebra` types at all — `glamx` (rapier3d's own math backend, confirmed by reading its source in the local registry cache) defines them as direct re-exports of `glam::Vec3`/`glam::Quat`. So once the workspace pin matched, `convert.rs`'s 4 functions were straight identity — the file was deleted outright rather than rewritten to `.into()` calls, and its 6 call sites in `engine-physics/src/system.rs` now pass/read `glam::Vec3`/`Quat` directly. Zero API-surface breakage from the version bump itself (confirmed against glam's own CHANGELOG before touching code — nothing used by this codebase changed between 0.29 and 0.33), aside from two functions moving behind a deprecation notice: `Mat4::perspective_rh`/`Mat4::look_at_rh` → `glam::camera::rh::proj::directx::perspective`/`glam::camera::rh::view::look_at_mat4` (same NDC convention, updated in `engine-render/src/gpu.rs`, golden-image tests stayed byte-identical). The stale 0.30/0.31/0.32 lockfile entries stayed — they're optional-feature pulls on `nalgebra`, independent of the workspace's own glam pin — not chased further since the real payoff didn't depend on it.)*
 
 ---
 

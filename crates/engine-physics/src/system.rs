@@ -5,7 +5,6 @@ use engine_core::Transform;
 use rapier3d::prelude as rp;
 
 use crate::components::{BodyType, Collider, ColliderShape, RigidBody};
-use crate::convert::{quat_from_rapier, quat_to_rapier, vec3_from_rapier, vec3_to_rapier};
 
 /// Cross-tick rapier state, held in a `Sim`'s `Resources` bag (see
 /// ADR-0008) — never touched from a scene file or agent-facing surface
@@ -42,7 +41,7 @@ impl PhysicsState {
         let Some(body) = self.world.bodies.get_mut(handle) else {
             return false;
         };
-        body.add_force(vec3_to_rapier(force), wake_up);
+        body.add_force(force, wake_up);
         true
     }
 }
@@ -96,10 +95,7 @@ pub fn physics_step(args: &mut SystemArgs) -> Result<(), SystemError> {
         .collect();
 
     for (entity, rb, col, transform) in new_entities {
-        let pose = rp::Pose::from_parts(
-            vec3_to_rapier(transform.position),
-            quat_to_rapier(transform.rotation),
-        );
+        let pose = rp::Pose::from_parts(transform.position, transform.rotation);
         let body_builder = match rb.body_type {
             BodyType::Dynamic => rp::RigidBodyBuilder::dynamic(),
             BodyType::Fixed => rp::RigidBodyBuilder::fixed(),
@@ -126,8 +122,8 @@ pub fn physics_step(args: &mut SystemArgs) -> Result<(), SystemError> {
             continue;
         }
         if let Ok(mut transform) = args.world.get::<&mut Transform>(entity) {
-            transform.position = vec3_from_rapier(body.translation());
-            transform.rotation = quat_from_rapier(*body.rotation());
+            transform.position = body.translation();
+            transform.rotation = *body.rotation();
         }
         // rapier does NOT clear a force added via `PhysicsState::apply_force`
         // after stepping — its own doc comment on `reset_forces` is explicit

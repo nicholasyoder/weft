@@ -975,13 +975,14 @@ fn extract_scene(
     texts.sort_by_key(|(e, _)| e.to_bits());
 
     let aspect = width as f32 / height as f32;
-    let projection = Mat4::perspective_rh(
+    let projection = glam::camera::rh::proj::directx::perspective(
         camera.fov_y_degrees.to_radians(),
         aspect,
         camera.near,
         camera.far,
     );
-    let view = Mat4::look_at_rh(camera_transform.position, camera.target, Vec3::Y);
+    let view =
+        glam::camera::rh::view::look_at_mat4(camera_transform.position, camera.target, Vec3::Y);
     let view_proj = projection * view;
 
     Ok((
