@@ -18,13 +18,19 @@ use crate::SimSource;
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
 
-pub fn run(scene: &Path, seed: u64, ticks: u64, format: OutputFormat) -> ExitCode {
+pub fn run(
+    scene: &Path,
+    seed: u64,
+    ticks: u64,
+    assets_dir: &Path,
+    format: OutputFormat,
+) -> ExitCode {
     if ticks == 0 {
         CliError::invalid_ticks(ticks).print(format.is_json());
         return ExitCode::FAILURE;
     }
 
-    let mut watch_paths = match build_run_and_print(scene, seed, ticks, format, "run") {
+    let mut watch_paths = match build_run_and_print(scene, seed, ticks, assets_dir, format, "run") {
         Ok(paths) => paths,
         Err(()) => return ExitCode::FAILURE,
     };
@@ -80,7 +86,7 @@ pub fn run(scene: &Path, seed: u64, ticks: u64, format: OutputFormat) -> ExitCod
             return ExitCode::SUCCESS;
         }
 
-        match build_run_and_print(scene, seed, ticks, format, "reload") {
+        match build_run_and_print(scene, seed, ticks, assets_dir, format, "reload") {
             Ok(paths) => watch_paths = paths,
             Err(()) => {
                 // A reload error is reported (see build_run_and_print) but
@@ -98,11 +104,16 @@ fn build_run_and_print(
     scene: &Path,
     seed: u64,
     ticks: u64,
+    assets_dir: &Path,
     format: OutputFormat,
     event_name: &str,
 ) -> Result<Vec<PathBuf>, ()> {
-    match crate::run_and_dump_with_script_paths(SimSource::Scene(scene.to_path_buf()), seed, ticks)
-    {
+    match crate::run_and_dump_with_script_paths(
+        SimSource::Scene(scene.to_path_buf()),
+        seed,
+        ticks,
+        assets_dir,
+    ) {
         Ok((world, mut paths)) => {
             paths.push(scene.to_path_buf());
             if format.is_json() {

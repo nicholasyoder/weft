@@ -4,6 +4,7 @@
 //! separate game crate yet, so this is the single place scene files,
 //! hardcoded scenarios, and rendering share component definitions.
 
+use engine_anim::{animation_step, Animator, JointPalette};
 use engine_core::Transform;
 use engine_physics::{physics_step, Collider, RigidBody};
 use engine_render::{Camera, Material, MeshRef, Text};
@@ -138,6 +139,38 @@ fn load_fuse(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), se
     Ok(())
 }
 
+fn load_animator(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<Animator>(v)?);
+    Ok(())
+}
+
+fn dump_animator(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&Animator>()
+        .map(|a| ("Animator", serde_json::to_value((*a).clone()).unwrap()))
+}
+
+/// `JointPalette` is computed by `animation_step` every tick, never
+/// hand-authored — but it's registered with a real loader (not a rejecting
+/// stub) rather than inventing a "dump-only" registry mechanism, since a
+/// scene-authored initial value is harmless and gets overwritten the very
+/// next tick an `Animator` is present, the same relationship `Transform`
+/// already has with `physics_step`.
+fn load_joint_palette(
+    v: serde_json::Value,
+    b: &mut hecs::EntityBuilder,
+) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<JointPalette>(v)?);
+    Ok(())
+}
+
+fn dump_joint_palette(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&JointPalette>()
+        .map(|p| ("JointPalette", serde_json::to_value((*p).clone()).unwrap()))
+}
+
 pub fn components() -> ComponentRegistry {
     let mut registry = ComponentRegistry::new();
     registry.register("Position", load_position, dump_position);
@@ -152,6 +185,8 @@ pub fn components() -> ComponentRegistry {
     registry.register("Collider", load_collider, dump_collider);
     registry.register("DespawnAfter", load_despawn_after, dump_despawn_after);
     registry.register("Fuse", load_fuse, dump_fuse);
+    registry.register("Animator", load_animator, dump_animator);
+    registry.register("JointPalette", load_joint_palette, dump_joint_palette);
     registry
 }
 
@@ -160,5 +195,6 @@ pub fn systems() -> SystemRegistry {
     registry.register("movement", movement_system);
     registry.register("physics", physics_step);
     registry.register("despawn-after", despawn_after_system);
+    registry.register("animation", animation_step);
     registry
 }

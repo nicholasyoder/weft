@@ -4,17 +4,30 @@ use std::process::ExitCode;
 use crate::commands::OutputFormat;
 use crate::SimSource;
 
-pub fn run(scene: &Path, seed: u64, ticks: u64, watch: bool, format: OutputFormat) -> ExitCode {
+#[allow(clippy::too_many_arguments)]
+pub fn run(
+    scene: &Path,
+    seed: u64,
+    ticks: u64,
+    watch: bool,
+    assets_dir: &Path,
+    format: OutputFormat,
+) -> ExitCode {
     if ticks == 0 {
         crate::diagnostics::CliError::invalid_ticks(ticks).print(format.is_json());
         return ExitCode::FAILURE;
     }
 
     if watch {
-        return crate::watch::run(scene, seed, ticks, format);
+        return crate::watch::run(scene, seed, ticks, assets_dir, format);
     }
 
-    match crate::run_and_dump(SimSource::Scene(scene.to_path_buf()), seed, ticks) {
+    match crate::run_and_dump_with_assets_dir(
+        SimSource::Scene(scene.to_path_buf()),
+        seed,
+        ticks,
+        assets_dir,
+    ) {
         Ok(world) => {
             if format.is_json() {
                 println!(

@@ -686,6 +686,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-anim"
+version = "0.1.0"
+dependencies = [
+ "engine-assets",
+ "engine-core",
+ "glam 0.29.3",
+ "hecs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "engine-assets"
 version = "0.1.0"
 dependencies = [
@@ -705,6 +717,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "engine-anim",
  "engine-assets",
  "engine-core",
  "engine-physics",

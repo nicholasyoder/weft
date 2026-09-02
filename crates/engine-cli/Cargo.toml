@@ -17,6 +17,7 @@ engine-scene = { path = "../engine-scene" }
 engine-assets = { path = "../engine-assets" }
 engine-render = { path = "../engine-render" }
 engine-physics = { path = "../engine-physics" }
+engine-anim = { path = "../engine-anim" }
 engine-script = { path = "../engine-script" }
 hecs.workspace = true
 glam.workspace = true

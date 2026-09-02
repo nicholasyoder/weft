@@ -42,6 +42,14 @@ pub enum MeshKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeshRef {
     pub mesh: MeshKind,
+    /// Content hash of an `engine_assets::skin::SkinData` asset (see
+    /// ADR-0015) — present only for a skinned mesh, joined with `mesh`'s
+    /// own vertex data at draw time to build the GPU-skinned vertex
+    /// buffer. `None` for an ordinary (non-skinned) mesh, the overwhelming
+    /// majority of `MeshRef`s, so this is `#[serde(default)]` to keep every
+    /// existing scene file's `MeshRef` table unchanged.
+    #[serde(default)]
+    pub skin: Option<String>,
 }
 
 /// Flat base color, modulated by a single hardcoded directional light in the

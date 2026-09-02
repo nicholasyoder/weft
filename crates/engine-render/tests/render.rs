@@ -31,6 +31,7 @@ fn cube_at(position: Vec3) -> (Transform, MeshRef, Material) {
         Transform::from_position(position),
         MeshRef {
             mesh: MeshKind::Cube,
+            skin: None,
         },
         Material {
             color: [0.8, 0.2, 0.2],
@@ -182,6 +183,7 @@ fn rendering_an_imported_textured_mesh_produces_non_blank_output() {
         Transform::from_position(Vec3::ZERO),
         MeshRef {
             mesh: MeshKind::Asset(imported.mesh_hash),
+            skin: None,
         },
         Material {
             color: imported.base_color,
@@ -207,6 +209,7 @@ fn rendering_a_scene_with_an_unknown_asset_hash_is_a_structured_error() {
         Transform::from_position(Vec3::ZERO),
         MeshRef {
             mesh: MeshKind::Asset("does-not-exist".to_string()),
+            skin: None,
         },
         Material {
             color: [1.0, 1.0, 1.0],

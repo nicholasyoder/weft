@@ -24,6 +24,8 @@ enum Command {
         seed: u64,
         #[arg(long, default_value_t = 60)]
         ticks: u64,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -38,6 +40,8 @@ enum Command {
         ticks: u64,
         #[arg(long)]
         watch: bool,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -96,12 +100,16 @@ enum Command {
     Inspect {
         #[command(flatten)]
         source: InspectSource,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
     /// Replay a recording file deterministically.
     Replay {
         recording: PathBuf,
+        #[arg(long, default_value = "assets")]
+        assets_dir: PathBuf,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -130,21 +138,23 @@ fn main() -> ExitCode {
             scene,
             seed,
             ticks,
+            assets_dir,
             format,
         } => {
             let source = match scene {
                 Some(path) => SimSource::Scene(path),
                 None => SimSource::Scenario(scenario.unwrap_or_else(|| "basic".to_string())),
             };
-            commands::test::run(source, seed, ticks, format)
+            commands::test::run(source, seed, ticks, &assets_dir, format)
         }
         Command::Run {
             scene,
             seed,
             ticks,
             watch,
+            assets_dir,
             format,
-        } => commands::run::run(&scene, seed, ticks, watch, format),
+        } => commands::run::run(&scene, seed, ticks, watch, &assets_dir, format),
         Command::Render {
             scene,
             to,
@@ -170,7 +180,11 @@ fn main() -> ExitCode {
             out,
             format,
         } => commands::import::run(&input, &assets_dir, out.as_deref(), format),
-        Command::Inspect { source, format } => {
+        Command::Inspect {
+            source,
+            assets_dir,
+            format,
+        } => {
             let src = if let Some(path) = source.recording {
                 commands::inspect::Source::Recording { path }
             } else if let Some(path) = source.scene {
@@ -188,8 +202,12 @@ fn main() -> ExitCode {
                     ticks: source.ticks,
                 }
             };
-            commands::inspect::run(src, format)
+            commands::inspect::run(src, &assets_dir, format)
         }
-        Command::Replay { recording, format } => commands::replay::run(&recording, format),
+        Command::Replay {
+            recording,
+            assets_dir,
+            format,
+        } => commands::replay::run(&recording, &assets_dir, format),
     }
 }

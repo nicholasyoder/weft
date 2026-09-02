@@ -59,6 +59,9 @@ pub struct RunParams {
     pub seed: Option<u64>,
     /// Number of ticks to run. Defaults to 60.
     pub ticks: Option<u64>,
+    /// Content-addressed asset store directory. Defaults to "assets" — only
+    /// matters if the scene uses `Animator`/asset-referencing components.
+    pub assets_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -70,6 +73,8 @@ pub struct TestParams {
     pub scene: Option<String>,
     pub seed: Option<u64>,
     pub ticks: Option<u64>,
+    /// Content-addressed asset store directory. Defaults to "assets".
+    pub assets_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -83,12 +88,16 @@ pub struct InspectParams {
     pub recording: Option<String>,
     pub seed: Option<u64>,
     pub ticks: Option<u64>,
+    /// Content-addressed asset store directory. Defaults to "assets".
+    pub assets_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReplayParams {
     /// Path to the recording file to replay.
     pub recording: String,
+    /// Content-addressed asset store directory. Defaults to "assets".
+    pub assets_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -148,7 +157,13 @@ impl WeftServer {
         if ticks == 0 {
             return err(CliError::invalid_ticks(ticks));
         }
-        match engine_cli::run_and_dump(SimSource::Scene(p.scene.clone().into()), seed, ticks) {
+        let assets_dir = p.assets_dir.unwrap_or_else(|| "assets".to_string());
+        match engine_cli::run_and_dump_with_assets_dir(
+            SimSource::Scene(p.scene.clone().into()),
+            seed,
+            ticks,
+            assets_dir.as_ref(),
+        ) {
             Ok(world) => ok(json!({
                 "status": "ok",
                 "scene": p.scene,
@@ -177,7 +192,13 @@ impl WeftServer {
             Err(e) => return err(e),
         };
         let label = source.label();
-        match engine_cli::verify_scenario_determinism(source, seed, ticks) {
+        let assets_dir = p.assets_dir.unwrap_or_else(|| "assets".to_string());
+        match engine_cli::verify_scenario_determinism_with_assets_dir(
+            source,
+            seed,
+            ticks,
+            assets_dir.as_ref(),
+        ) {
             Ok(json) => ok(json!({
                 "status": "pass",
                 "source": label,
@@ -226,7 +247,8 @@ impl WeftServer {
             return err(CliError::invalid_ticks(ticks));
         }
 
-        match engine_cli::run_and_dump(source, seed, ticks) {
+        let assets_dir = p.assets_dir.unwrap_or_else(|| "assets".to_string());
+        match engine_cli::run_and_dump_with_assets_dir(source, seed, ticks, assets_dir.as_ref()) {
             Ok(world) => ok(world),
             Err(e) => err(e),
         }
@@ -247,14 +269,24 @@ impl WeftServer {
             return err(CliError::invalid_ticks(recording.ticks));
         }
 
+        let assets_dir = p.assets_dir.unwrap_or_else(|| "assets".to_string());
         let source = recording.source();
         let result = match recording.dump_every {
-            Some(every) if every > 0 => {
-                engine_cli::run_and_dump_snapshots(source, recording.seed, recording.ticks, every)
-                    .map(|snapshots| json!({ "snapshots": snapshots }))
-            }
-            _ => engine_cli::run_and_dump(source, recording.seed, recording.ticks)
-                .map(|world| json!({ "world": world })),
+            Some(every) if every > 0 => engine_cli::run_and_dump_snapshots_with_assets_dir(
+                source,
+                recording.seed,
+                recording.ticks,
+                every,
+                assets_dir.as_ref(),
+            )
+            .map(|snapshots| json!({ "snapshots": snapshots })),
+            _ => engine_cli::run_and_dump_with_assets_dir(
+                source,
+                recording.seed,
+                recording.ticks,
+                assets_dir.as_ref(),
+            )
+            .map(|world| json!({ "world": world })),
         };
 
         match result {
@@ -321,6 +353,9 @@ impl WeftServer {
                 "mesh_hash": result.mesh_hash,
                 "texture_hash": result.texture_hash,
                 "font_hash": result.font_hash,
+                "skin_hash": result.skin_hash,
+                "skeleton_hash": result.skeleton_hash,
+                "clip_hash": result.clip_hash,
             })),
             Err(e) => err(e),
         }

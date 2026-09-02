@@ -1,16 +1,23 @@
+use std::path::Path;
 use std::process::ExitCode;
 
 use crate::commands::OutputFormat;
-use crate::{verify_scenario_determinism, DeterminismResult, SimSource};
+use crate::{verify_scenario_determinism_with_assets_dir, DeterminismResult, SimSource};
 
-pub fn run(source: SimSource, seed: u64, ticks: u64, format: OutputFormat) -> ExitCode {
+pub fn run(
+    source: SimSource,
+    seed: u64,
+    ticks: u64,
+    assets_dir: &Path,
+    format: OutputFormat,
+) -> ExitCode {
     if ticks == 0 {
         crate::diagnostics::CliError::invalid_ticks(ticks).print(format.is_json());
         return ExitCode::FAILURE;
     }
 
     let label = source.label();
-    match verify_scenario_determinism(source, seed, ticks) {
+    match verify_scenario_determinism_with_assets_dir(source, seed, ticks, assets_dir) {
         Ok(json) => {
             if format.is_json() {
                 println!(

@@ -47,17 +47,25 @@ impl SimSource {
         }
     }
 
-    fn build(&self, seed: u64) -> Result<(Sim, Vec<ComponentDumper>), CliError> {
-        match self {
+    /// `assets_dir` is inserted into the built `Sim`'s `Resources` as
+    /// `engine_core::AssetsDir` — `animation_step` is the first per-tick
+    /// simulation system needing read access to the content store, so
+    /// every `Sim`, not just rendering commands, now carries this (see
+    /// ADR-0015).
+    fn build(&self, seed: u64, assets_dir: &Path) -> Result<(Sim, Vec<ComponentDumper>), CliError> {
+        let (mut sim, dumpers) = match self {
             SimSource::Scenario(name) => {
                 let s = scenarios::find(name).ok_or_else(|| CliError::unknown_scenario(name))?;
-                Ok(((s.build)(seed), s.dumpers.to_vec()))
+                ((s.build)(seed), s.dumpers.to_vec())
             }
             SimSource::Scene(path) => {
                 engine_scene::load(path, seed, &registry::components(), &registry::systems())
-                    .map_err(|e| CliError::from_scene_error(path, &e))
+                    .map_err(|e| CliError::from_scene_error(path, &e))?
             }
-        }
+        };
+        sim.resources
+            .insert(engine_core::AssetsDir(assets_dir.to_path_buf()));
+        Ok((sim, dumpers))
     }
 
     /// Like `build`, but also scans the built world for `Script` components
@@ -67,8 +75,9 @@ impl SimSource {
     fn build_with_scripts(
         &self,
         seed: u64,
+        assets_dir: &Path,
     ) -> Result<(Sim, Vec<ComponentDumper>, Option<ScriptHost>), CliError> {
-        let (sim, dumpers) = self.build(seed)?;
+        let (sim, dumpers) = self.build(seed, assets_dir)?;
         let host = build_script_host(&sim)?;
         Ok((sim, dumpers, host))
     }
@@ -149,11 +158,27 @@ pub(crate) fn step_and_dispatch_with_input(
     Ok(())
 }
 
+/// The default asset store directory every batch command used before any
+/// of it needed one — kept as one named constant so the many `_with_
+/// assets_dir`-less wrappers below stay in sync.
+const DEFAULT_ASSETS_DIR: &str = "assets";
+
 /// Builds `source` into a live `Sim` without dumping it to JSON — what
 /// `render` needs (direct `World` access), unlike every other command,
 /// which only ever wants the JSON dump `run_and_dump` produces.
 pub fn build_sim(source: impl Into<SimSource>, seed: u64) -> Result<Sim, CliError> {
-    source.into().build(seed).map(|(sim, _)| sim)
+    build_sim_with_assets_dir(source, seed, Path::new(DEFAULT_ASSETS_DIR))
+}
+
+/// Like `build_sim`, but with an explicit asset store directory instead of
+/// the `"assets"` default — what commands with their own `--assets-dir`
+/// flag pass through.
+pub fn build_sim_with_assets_dir(
+    source: impl Into<SimSource>,
+    seed: u64,
+    assets_dir: &Path,
+) -> Result<Sim, CliError> {
+    source.into().build(seed, assets_dir).map(|(sim, _)| sim)
 }
 
 /// Builds `source`, runs it for `ticks` ticks, and returns the final
@@ -165,7 +190,18 @@ pub fn run_and_dump(
     seed: u64,
     ticks: u64,
 ) -> Result<serde_json::Value, CliError> {
-    run_and_dump_with_script_paths(source, seed, ticks).map(|(json, _)| json)
+    run_and_dump_with_assets_dir(source, seed, ticks, Path::new(DEFAULT_ASSETS_DIR))
+}
+
+/// Like `run_and_dump`, but with an explicit asset store directory instead
+/// of the `"assets"` default.
+pub fn run_and_dump_with_assets_dir(
+    source: impl Into<SimSource>,
+    seed: u64,
+    ticks: u64,
+    assets_dir: &Path,
+) -> Result<serde_json::Value, CliError> {
+    run_and_dump_with_script_paths(source, seed, ticks, assets_dir).map(|(json, _)| json)
 }
 
 /// Like `run_and_dump`, but also returns every distinct `.lua` script path
@@ -176,8 +212,9 @@ pub(crate) fn run_and_dump_with_script_paths(
     source: impl Into<SimSource>,
     seed: u64,
     ticks: u64,
+    assets_dir: &Path,
 ) -> Result<(serde_json::Value, Vec<PathBuf>), CliError> {
-    let (mut sim, dumpers, mut host) = source.into().build_with_scripts(seed)?;
+    let (mut sim, dumpers, mut host) = source.into().build_with_scripts(seed, assets_dir)?;
     let components = registry::components();
     for _ in 0..ticks {
         step_and_dispatch(&mut sim, &dumpers, host.as_mut(), &components)?;
@@ -199,7 +236,25 @@ pub fn run_and_dump_snapshots(
     ticks: u64,
     dump_every: u64,
 ) -> Result<Vec<serde_json::Value>, CliError> {
-    let (mut sim, dumpers, mut host) = source.into().build_with_scripts(seed)?;
+    run_and_dump_snapshots_with_assets_dir(
+        source,
+        seed,
+        ticks,
+        dump_every,
+        Path::new(DEFAULT_ASSETS_DIR),
+    )
+}
+
+/// Like `run_and_dump_snapshots`, but with an explicit asset store
+/// directory instead of the `"assets"` default.
+pub fn run_and_dump_snapshots_with_assets_dir(
+    source: impl Into<SimSource>,
+    seed: u64,
+    ticks: u64,
+    dump_every: u64,
+    assets_dir: &Path,
+) -> Result<Vec<serde_json::Value>, CliError> {
+    let (mut sim, dumpers, mut host) = source.into().build_with_scripts(seed, assets_dir)?;
     let components = registry::components();
     let mut snapshots = Vec::new();
     for t in 1..=ticks {
@@ -228,7 +283,8 @@ pub fn render_scene(
     assets_dir: &Path,
     to: &Path,
 ) -> Result<(), CliError> {
-    let mut sim = build_sim(SimSource::Scene(scene.to_path_buf()), seed)?;
+    let mut sim =
+        build_sim_with_assets_dir(SimSource::Scene(scene.to_path_buf()), seed, assets_dir)?;
     sim.run(ticks);
     engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to)
         .map_err(|e| CliError::from_render_error(&e))
@@ -243,6 +299,9 @@ pub struct ImportResult {
     pub mesh_hash: Option<String>,
     pub texture_hash: Option<String>,
     pub font_hash: Option<String>,
+    pub skin_hash: Option<String>,
+    pub skeleton_hash: Option<String>,
+    pub clip_hash: Option<String>,
 }
 
 /// Converts `input` (a glTF file, a loose image file, or a font file) into
@@ -267,6 +326,9 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 mesh_hash: Some(imported.mesh_hash.clone()),
                 texture_hash: imported.texture_hash.clone(),
                 font_hash: None,
+                skin_hash: imported.skin_hash.clone(),
+                skeleton_hash: imported.skeleton_hash.clone(),
+                clip_hash: imported.clip_hash.clone(),
             })
         }
         "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tga" | "webp" => {
@@ -277,6 +339,9 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 mesh_hash: None,
                 texture_hash: Some(hash),
                 font_hash: None,
+                skin_hash: None,
+                skeleton_hash: None,
+                clip_hash: None,
             })
         }
         "ttf" | "otf" => {
@@ -287,6 +352,9 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 mesh_hash: None,
                 texture_hash: None,
                 font_hash: Some(hash),
+                skin_hash: None,
+                skeleton_hash: None,
+                clip_hash: None,
             })
         }
         other => Err(CliError::unsupported_import_extension(input, other)),
@@ -308,9 +376,22 @@ pub fn verify_scenario_determinism(
     seed: u64,
     ticks: u64,
 ) -> Result<serde_json::Value, DeterminismResult> {
+    verify_scenario_determinism_with_assets_dir(source, seed, ticks, Path::new(DEFAULT_ASSETS_DIR))
+}
+
+/// Like `verify_scenario_determinism`, but with an explicit asset store
+/// directory instead of the `"assets"` default.
+pub fn verify_scenario_determinism_with_assets_dir(
+    source: impl Into<SimSource>,
+    seed: u64,
+    ticks: u64,
+    assets_dir: &Path,
+) -> Result<serde_json::Value, DeterminismResult> {
     let source = source.into();
-    let json_a = run_and_dump(source.clone(), seed, ticks).map_err(DeterminismResult::Error)?;
-    let json_b = run_and_dump(source.clone(), seed, ticks).map_err(DeterminismResult::Error)?;
+    let json_a = run_and_dump_with_assets_dir(source.clone(), seed, ticks, assets_dir)
+        .map_err(DeterminismResult::Error)?;
+    let json_b = run_and_dump_with_assets_dir(source.clone(), seed, ticks, assets_dir)
+        .map_err(DeterminismResult::Error)?;
     if json_a == json_b {
         Ok(json_a)
     } else {

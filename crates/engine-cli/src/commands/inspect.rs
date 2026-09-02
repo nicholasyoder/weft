@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::ExitCode;
 
 use crate::commands::OutputFormat;
@@ -15,7 +16,7 @@ pub enum Source {
     },
 }
 
-pub fn run(source: Source, format: OutputFormat) -> ExitCode {
+pub fn run(source: Source, assets_dir: &Path, format: OutputFormat) -> ExitCode {
     let (sim_source, seed, ticks) = match source {
         Source::Inline {
             source,
@@ -36,7 +37,7 @@ pub fn run(source: Source, format: OutputFormat) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    match crate::run_and_dump(sim_source, seed, ticks) {
+    match crate::run_and_dump_with_assets_dir(sim_source, seed, ticks, assets_dir) {
         Ok(json) => {
             println!("{}", serde_json::to_string_pretty(&json).unwrap());
             ExitCode::SUCCESS

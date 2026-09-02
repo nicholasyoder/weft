@@ -44,15 +44,24 @@ pub(crate) fn gltf_fragment(imported: &engine_assets::ImportedAsset) -> String {
     fragment.push_str("[[entity]]\nname = \"imported\"\n\n");
     fragment.push_str("[entity.components.Transform]\nposition = [0.0, 0.0, 0.0]\n\n");
     fragment.push_str(&format!(
-        "[entity.components.MeshRef]\nmesh = {{ asset = \"{}\" }}\n\n",
+        "[entity.components.MeshRef]\nmesh = {{ asset = \"{}\" }}\n",
         imported.mesh_hash
     ));
+    if let Some(skin_hash) = &imported.skin_hash {
+        fragment.push_str(&format!("skin = \"{skin_hash}\"\n"));
+    }
+    fragment.push('\n');
     fragment.push_str(&format!(
         "[entity.components.Material]\ncolor = [{:.6}, {:.6}, {:.6}]\n",
         imported.base_color[0], imported.base_color[1], imported.base_color[2]
     ));
     if let Some(texture_hash) = &imported.texture_hash {
         fragment.push_str(&format!("texture = \"{texture_hash}\"\n"));
+    }
+    if let (Some(skeleton_hash), Some(clip_hash)) = (&imported.skeleton_hash, &imported.clip_hash) {
+        fragment.push_str(&format!(
+            "\n[entity.components.Animator]\nskeleton = \"{skeleton_hash}\"\nclip = \"{clip_hash}\"\n"
+        ));
     }
     fragment
 }
