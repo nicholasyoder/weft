@@ -1,0 +1,29 @@
+[[entity]]
+name = "camera"
+
+[entity.components.Transform]
+position = [2.0, 1.0, 4.0]
+
+[entity.components.Camera]
+target = [0.0, 0.5, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "arm"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.MeshRef]
+mesh = { asset = "5d0273423d165efd7b4d3914b7ce151ce9cf8373b81c63a1f0ad2b9aee743fe6" }
+skin = "26862da01b41fbe9b918231e97458add2d9dbc7b79ba2ee3ca3814e9586e8959"
+
+[entity.components.Material]
+color = [1.0, 1.0, 1.0]
+
+[entity.components.Animator]
+skeleton = "1fed23f7a2ee38ca01b083f25a621bb7f93873ba69cb6899414af925809c9b98"
+clip = "632d2405c7df15af61d7abcfdc9d882f6045ebff71b95512c091299b998832b3"
+
+[[system]]
+name = "animation"
