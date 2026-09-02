@@ -108,6 +108,58 @@ pub fn sphere() -> MeshData {
     MeshData { vertices, indices }
 }
 
+/// A GPU-skinned vertex: the same position/normal/uv `Vertex` carries, plus
+/// up to 4 joint influences (index into a per-draw joint-matrix palette,
+/// see ADR-0015) and their blend weights. A separate type from `Vertex`
+/// (not `Vertex` with extra always-present fields) so an ordinary,
+/// non-skinned mesh's vertex buffer layout — and therefore `mesh_cache`'s
+/// existing contents — is completely unaffected by skinning's existence.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SkinnedVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+    pub joints: [u32; 4],
+    pub weights: [f32; 4],
+}
+
+pub struct SkinnedMeshData {
+    pub vertices: Vec<SkinnedVertex>,
+    pub indices: Vec<u32>,
+}
+
+/// Joins an imported mesh's plain geometry with its separately-stored
+/// skinning data (vertex-index-aligned to `data.positions`, same
+/// convention `normals`/`uvs` already use — see ADR-0015) into the
+/// interleaved GPU-ready form the skinned render pipeline uses. Panics if
+/// the two don't have the same vertex count, which would mean a mesh/skin
+/// pair that didn't actually come from the same glTF primitive import —
+/// not a reachable state through `engine import`'s own path.
+pub fn from_skinned_asset(
+    data: &engine_assets::mesh::MeshData,
+    skin: &engine_assets::skin::SkinData,
+) -> SkinnedMeshData {
+    assert_eq!(
+        data.positions.len(),
+        skin.joints.len(),
+        "mesh and skin must have the same vertex count"
+    );
+    let vertices = (0..data.positions.len())
+        .map(|i| SkinnedVertex {
+            position: data.positions[i],
+            normal: data.normals[i],
+            uv: data.uvs[i],
+            joints: skin.joints[i].map(u32::from),
+            weights: skin.weights[i],
+        })
+        .collect();
+    SkinnedMeshData {
+        vertices,
+        indices: data.indices.clone(),
+    }
+}
+
 /// Converts an imported `engine-assets` mesh (plain position/normal/uv data)
 /// into the interleaved GPU-ready form the render pipeline uses.
 pub fn from_asset(data: &engine_assets::mesh::MeshData) -> MeshData {

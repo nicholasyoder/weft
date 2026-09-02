@@ -4,9 +4,9 @@ use engine_assets::animation::AnimationClip;
 use engine_assets::skeleton::Skeleton;
 use engine_assets::{animation, skeleton, AssetStore};
 use engine_core::scheduler::SystemArgs;
-use engine_core::AssetsDir;
+use engine_core::{AssetsDir, JointPalette};
 
-use crate::components::{Animator, JointPalette};
+use crate::components::Animator;
 use crate::sampling;
 
 /// Lazily-decoded skeleton/clip data, held in a `Sim`'s `Resources` bag —

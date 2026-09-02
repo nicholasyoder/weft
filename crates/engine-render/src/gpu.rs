@@ -6,9 +6,9 @@ use wgpu::util::DeviceExt;
 
 use crate::components::{Camera, Material, MeshKind, MeshRef, Text};
 use crate::error::RenderError;
-use crate::mesh::{self, Vertex};
+use crate::mesh::{self, SkinnedVertex, Vertex};
 use crate::text::{self, GlyphAtlas};
-use engine_core::Transform;
+use engine_core::{JointPalette, Transform};
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -30,6 +30,13 @@ struct Drawable {
     mesh: MeshKind,
     color: [f32; 3],
     texture: Option<String>,
+    /// A content hash into the `SkinData` asset store, plus the same
+    /// entity's `JointPalette` matrices (if any) — both must be present to
+    /// actually draw skinned; see `draw()`'s `use_skinned` check for why a
+    /// `skin` with no palette yet falls back to an ordinary static draw
+    /// rather than erroring or guessing a joint count.
+    skin: Option<String>,
+    joint_matrices: Option<Vec<[[f32; 4]; 4]>>,
 }
 
 struct TextDrawable {
@@ -172,6 +179,18 @@ pub struct RenderContext {
     sphere_buffers: MeshBuffers,
     mesh_cache: HashMap<String, MeshBuffers>,
     texture_cache: HashMap<String, wgpu::BindGroup>,
+    // Skinned mesh pass — a second shader/pipeline (opaque, same depth
+    // settings as the 3D pipeline; not alpha-blended like the UI pass
+    // below) with a third bind group carrying a per-draw joint-matrix
+    // storage buffer. See ADR-0015.
+    skinned_shader: wgpu::ShaderModule,
+    joint_bind_group_layout: wgpu::BindGroupLayout,
+    skinned_pipeline_layout: wgpu::PipelineLayout,
+    skinned_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    // Keyed by (mesh_hash, skin_hash) — a mesh could in principle be
+    // referenced with different skins, though `engine import` never
+    // produces that today.
+    skin_cache: HashMap<(String, String), MeshBuffers>,
     // UI/text pass — a second shader/pipeline (alpha-blended, depth-always)
     // reusing `texture_bind_group_layout`/`sampler` above for its glyph
     // atlas textures, since an R8Unorm atlas fits that same layout shape.
@@ -204,6 +223,43 @@ fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
                 offset: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
                 shader_location: 2,
                 format: wgpu::VertexFormat::Float32x2,
+            },
+        ],
+    }
+}
+
+fn skinned_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    const JOINTS_OFFSET: wgpu::BufferAddress = (std::mem::size_of::<[f32; 3]>() * 2
+        + std::mem::size_of::<[f32; 2]>())
+        as wgpu::BufferAddress;
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<SkinnedVertex>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: (std::mem::size_of::<[f32; 3]>() * 2) as wgpu::BufferAddress,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: JOINTS_OFFSET,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Uint32x4,
+            },
+            wgpu::VertexAttribute {
+                offset: JOINTS_OFFSET + std::mem::size_of::<[u32; 4]>() as wgpu::BufferAddress,
+                shader_location: 4,
+                format: wgpu::VertexFormat::Float32x4,
             },
         ],
     }
@@ -264,6 +320,37 @@ impl RenderContext {
             bind_group_layouts: &[Some(&bind_group_layout), Some(&texture_bind_group_layout)],
             immediate_size: 0,
         });
+
+        let skinned_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("weft-skinned-shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
+        });
+
+        let joint_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("weft-joint-layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let skinned_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("weft-skinned-pipeline-layout"),
+                bind_group_layouts: &[
+                    Some(&bind_group_layout),
+                    Some(&texture_bind_group_layout),
+                    Some(&joint_bind_group_layout),
+                ],
+                immediate_size: 0,
+            });
 
         let cube_buffers = upload_mesh(device, &mesh::cube());
         let plane_buffers = upload_mesh(device, &mesh::plane());
@@ -340,6 +427,11 @@ impl RenderContext {
             sphere_buffers,
             mesh_cache: HashMap::new(),
             texture_cache: HashMap::new(),
+            skinned_shader,
+            joint_bind_group_layout,
+            skinned_pipeline_layout,
+            skinned_pipelines: HashMap::new(),
+            skin_cache: HashMap::new(),
             ui_shader,
             ui_bind_group_layout,
             ui_pipeline_layout,
@@ -371,6 +463,56 @@ impl RenderContext {
                         module: shader,
                         entry_point: Some("vs_main"),
                         buffers: &[Some(vertex_layout())],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: Some(wgpu::Face::Back),
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .clone()
+    }
+
+    /// The skinned-mesh pipeline variant: same opaque/depth-tested shape as
+    /// `pipeline_for`, just a different shader, vertex layout, and a third
+    /// (joint-matrix storage buffer) bind group — see `skinned_shader.wgsl`.
+    fn skinned_pipeline_for(&mut self, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        let device = &self.core.device;
+        let shader = &self.skinned_shader;
+        let pipeline_layout = &self.skinned_pipeline_layout;
+        self.skinned_pipelines
+            .entry(format)
+            .or_insert_with(|| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("weft-skinned-pipeline"),
+                    layout: Some(pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Some(skinned_vertex_layout())],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
                     fragment: Some(wgpu::FragmentState {
@@ -476,10 +618,12 @@ impl RenderContext {
         assets_dir: &Path,
     ) -> Result<(), RenderError> {
         let pipeline = self.pipeline_for(color_format);
+        let skinned_pipeline = self.skinned_pipeline_for(color_format);
         let ui_pipeline = self.ui_pipeline_for(color_format);
         let asset_store = engine_assets::AssetStore::new(assets_dir);
 
         let mut per_draw_state = Vec::with_capacity(drawables.len());
+        let mut joint_buffers: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
         let mut ui_buffers: Vec<(wgpu::Buffer, wgpu::Buffer, u32)> = Vec::new();
         let mut ui_uniform_state: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
 
@@ -513,8 +657,6 @@ impl RenderContext {
                 multiview_mask: None,
             });
 
-            pass.set_pipeline(&pipeline);
-
             for drawable in drawables {
                 let uniforms = Uniforms {
                     view_proj: view_proj.to_cols_array_2d(),
@@ -543,6 +685,87 @@ impl RenderContext {
                     });
                 per_draw_state.push((uniform_buffer, bind_group));
 
+                let texture_bind_group = match &drawable.texture {
+                    Some(hash) => {
+                        if !self.texture_cache.contains_key(hash) {
+                            let bind_group = load_texture_bind_group(
+                                hash,
+                                &self.core.device,
+                                &self.core.queue,
+                                &asset_store,
+                                &self.texture_bind_group_layout,
+                                &self.sampler,
+                            )?;
+                            self.texture_cache.insert(hash.clone(), bind_group);
+                        }
+                        self.texture_cache.get(hash).unwrap()
+                    }
+                    None => &self.white_bind_group,
+                };
+
+                let (_, bind_group) = per_draw_state.last().unwrap();
+
+                // A skinned draw needs both a `skin` hash (per-vertex
+                // joint/weight data) and a `JointPalette` on the same
+                // entity (the computed matrices `animation_step` writes).
+                // Missing either — e.g. `MeshRef.skin` set with no
+                // `Animator`/`"animation"` system wired up — falls back to
+                // an ordinary static draw in bind pose rather than
+                // guessing a joint count or hard-failing; see `Drawable`'s
+                // doc comment.
+                let skinned = match (&drawable.mesh, &drawable.skin, &drawable.joint_matrices) {
+                    (MeshKind::Asset(mesh_hash), Some(skin_hash), Some(matrices)) => {
+                        Some((mesh_hash.clone(), skin_hash.clone(), matrices))
+                    }
+                    _ => None,
+                };
+
+                if let Some((mesh_hash, skin_hash, matrices)) = skinned {
+                    let key = (mesh_hash, skin_hash);
+                    if !self.skin_cache.contains_key(&key) {
+                        let buffers = load_skinned_mesh_buffers(
+                            &key.0,
+                            &key.1,
+                            &self.core.device,
+                            &asset_store,
+                        )?;
+                        self.skin_cache.insert(key.clone(), buffers);
+                    }
+                    let (vertex_buffer, index_buffer, index_count) =
+                        self.skin_cache.get(&key).unwrap();
+
+                    let joint_buffer =
+                        self.core
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("weft-joint-matrices"),
+                                contents: bytemuck::cast_slice(matrices.as_slice()),
+                                usage: wgpu::BufferUsages::STORAGE,
+                            });
+                    let joint_bind_group =
+                        self.core
+                            .device
+                            .create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("weft-joint-bind-group"),
+                                layout: &self.joint_bind_group_layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: joint_buffer.as_entire_binding(),
+                                }],
+                            });
+                    joint_buffers.push((joint_buffer, joint_bind_group));
+                    let (_, joint_bind_group) = joint_buffers.last().unwrap();
+
+                    pass.set_pipeline(&skinned_pipeline);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.set_bind_group(1, texture_bind_group, &[]);
+                    pass.set_bind_group(2, joint_bind_group, &[]);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..*index_count, 0, 0..1);
+                    continue;
+                }
+
                 let (vertex_buffer, index_buffer, index_count) = match &drawable.mesh {
                     MeshKind::Cube => (
                         &self.cube_buffers.0,
@@ -569,25 +792,7 @@ impl RenderContext {
                     }
                 };
 
-                let texture_bind_group = match &drawable.texture {
-                    Some(hash) => {
-                        if !self.texture_cache.contains_key(hash) {
-                            let bind_group = load_texture_bind_group(
-                                hash,
-                                &self.core.device,
-                                &self.core.queue,
-                                &asset_store,
-                                &self.texture_bind_group_layout,
-                                &self.sampler,
-                            )?;
-                            self.texture_cache.insert(hash.clone(), bind_group);
-                        }
-                        self.texture_cache.get(hash).unwrap()
-                    }
-                    None => &self.white_bind_group,
-                };
-
-                let (_, bind_group) = per_draw_state.last().unwrap();
+                pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, bind_group, &[]);
                 pass.set_bind_group(1, texture_bind_group, &[]);
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
@@ -738,9 +943,9 @@ fn extract_scene(
     };
 
     let mut drawables: Vec<_> = world
-        .query::<(&Transform, &MeshRef, &Material)>()
+        .query::<(&Transform, &MeshRef, &Material, Option<&JointPalette>)>()
         .iter()
-        .map(|(e, (t, m, mat))| {
+        .map(|(e, (t, m, mat, palette))| {
             (
                 e,
                 Drawable {
@@ -748,6 +953,8 @@ fn extract_scene(
                     mesh: m.mesh.clone(),
                     color: mat.color,
                     texture: mat.texture.clone(),
+                    skin: m.skin.clone(),
+                    joint_matrices: palette.map(|p| p.matrices.clone()),
                 },
             )
         })
@@ -922,6 +1129,34 @@ fn load_mesh_buffers(
     let mesh_data = engine_assets::mesh::decode(&bytes)?;
     let render_mesh = mesh::from_asset(&mesh_data);
     Ok(upload_mesh(device, &render_mesh))
+}
+
+fn upload_skinned_mesh(device: &wgpu::Device, data: &mesh::SkinnedMeshData) -> MeshBuffers {
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("weft-skinned-mesh-vertices"),
+        contents: bytemuck::cast_slice(&data.vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("weft-skinned-mesh-indices"),
+        contents: bytemuck::cast_slice(&data.indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    (vertex_buffer, index_buffer, data.indices.len() as u32)
+}
+
+fn load_skinned_mesh_buffers(
+    mesh_hash: &str,
+    skin_hash: &str,
+    device: &wgpu::Device,
+    store: &engine_assets::AssetStore,
+) -> Result<MeshBuffers, RenderError> {
+    let mesh_bytes = store.get(mesh_hash)?;
+    let mesh_data = engine_assets::mesh::decode(&mesh_bytes)?;
+    let skin_bytes = store.get(skin_hash)?;
+    let skin_data = engine_assets::skin::decode(&skin_bytes)?;
+    let skinned_mesh = mesh::from_skinned_asset(&mesh_data, &skin_data);
+    Ok(upload_skinned_mesh(device, &skinned_mesh))
 }
 
 fn upload_rgba_texture(

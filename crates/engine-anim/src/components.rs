@@ -28,13 +28,3 @@ fn default_true() -> bool {
 fn default_speed() -> f32 {
     1.0
 }
-
-/// The computed per-joint skinning matrix palette for one animated entity
-/// (`joint_world * inverse_bind_matrix`, one per `Skeleton` joint, same
-/// root-first order) — written every tick by `animation_step`, read by
-/// `engine-render`. Never scene-authored; see `registry.rs`'s dump-only
-/// registration for this component.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct JointPalette {
-    pub matrices: Vec<[[f32; 4]; 4]>,
-}
