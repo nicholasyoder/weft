@@ -42,28 +42,7 @@ pub fn play(
     backends: wgpu::Backends,
     max_ticks: Option<u64>,
 ) -> Result<(), CliError> {
-    let (mut sim, dumpers) = engine_scene::load(scene, seed, components, systems)
-        .map_err(|e| CliError::from_scene_error(scene, &e))?;
-    let host = crate::build_script_host(&sim)?;
-
-    // Opens the real audio device once, up front — doesn't need
-    // `ActiveEventLoop` the way the window does, so there's no need to
-    // wait for `resumed()`. A missing/unavailable device (a real
-    // possibility in a headless sandbox) is not fatal: `kira::backend::
-    // cpal::Error::NoDefaultOutputDevice` is logged and `play` continues
-    // with no `AudioState` inserted at all, so `audio_step` falls back to
-    // its tracking-only default (see ADR-0016) instead of crashing the
-    // whole session over an unrelated audio device.
-    match engine_audio::LiveAudioBackend::new() {
-        Ok(backend) => {
-            sim.resources.insert(engine_audio::AudioState::with_backend(
-                engine_audio::AudioBackend::Live(Box::new(backend)),
-            ));
-        }
-        Err(e) => {
-            eprintln!("warning: no audio device available, continuing with no sound ({e})");
-        }
-    }
+    let (sim, dumpers, host) = build(scene, seed, assets_dir, components, systems)?;
 
     let event_loop =
         EventLoop::new().map_err(|e| CliError::play_event_loop_failed(&e.to_string()))?;
@@ -95,6 +74,56 @@ pub fn play(
         Some(err) => Err(err),
         None => Ok(()),
     }
+}
+
+/// Builds the `Sim` a live `play` session runs, plus its script host —
+/// split out from `play` itself so it's testable without a window/event
+/// loop (see `tests::assets_dir_is_inserted` below).
+///
+/// `AssetsDir` must be inserted here, the same as `SimSource::build` does
+/// for every batch command (`crates/engine-cli/src/lib.rs`) — without it,
+/// `animation_step`/`audio_step` both silently no-op every tick (by
+/// design, see ADR-0015/ADR-0016), so a live `play` session would never
+/// actually animate anything or play any sound at all, even with a
+/// perfectly good audio device open. This was a real, previously-latent
+/// bug: `live::play` never inserted it before, so `engine play`/`cargo run
+/// -p sandbox` never produced any audio, on any machine, regardless of
+/// device availability — masked because no test ever ran the live loop
+/// against a real device and listened.
+fn build(
+    scene: &Path,
+    seed: u64,
+    assets_dir: &Path,
+    components: &ComponentRegistry,
+    systems: &SystemRegistry,
+) -> Result<(Sim, Vec<ComponentDumper>, Option<ScriptHost>), CliError> {
+    let (mut sim, dumpers) = engine_scene::load(scene, seed, components, systems)
+        .map_err(|e| CliError::from_scene_error(scene, &e))?;
+    let host = crate::build_script_host(&sim)?;
+
+    sim.resources
+        .insert(engine_core::AssetsDir(assets_dir.to_path_buf()));
+
+    // Opens the real audio device once, up front — doesn't need
+    // `ActiveEventLoop` the way the window does, so there's no need to
+    // wait for `resumed()`. A missing/unavailable device (a real
+    // possibility in a headless sandbox) is not fatal: `kira::backend::
+    // cpal::Error::NoDefaultOutputDevice` is logged and `play` continues
+    // with no `AudioState` inserted at all, so `audio_step` falls back to
+    // its tracking-only default (see ADR-0016) instead of crashing the
+    // whole session over an unrelated audio device.
+    match engine_audio::LiveAudioBackend::new() {
+        Ok(backend) => {
+            sim.resources.insert(engine_audio::AudioState::with_backend(
+                engine_audio::AudioBackend::Live(Box::new(backend)),
+            ));
+        }
+        Err(e) => {
+            eprintln!("warning: no audio device available, continuing with no sound ({e})");
+        }
+    }
+
+    Ok((sim, dumpers, host))
 }
 
 struct App<'a> {
@@ -280,5 +309,34 @@ impl ApplicationHandler for App<'_> {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for a real, previously-latent bug: `build` (and
+    /// therefore `play`) must insert `AssetsDir`, or `animation_step`/
+    /// `audio_step` silently no-op every tick in a live session — no
+    /// window/event loop needed to catch this, since it's just a
+    /// `Resources` lookup after `build` returns.
+    #[test]
+    fn assets_dir_is_inserted() {
+        let components = crate::registry::components();
+        let systems = crate::registry::systems();
+        let (sim, _dumpers, _host) = build(
+            Path::new("tests/fixtures/scenes/basic.toml"),
+            1,
+            Path::new("assets"),
+            &components,
+            &systems,
+        )
+        .unwrap();
+
+        assert_eq!(
+            sim.resources.get::<engine_core::AssetsDir>().map(|a| &a.0),
+            Some(&PathBuf::from("assets")),
+        );
     }
 }
