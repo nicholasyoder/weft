@@ -3,7 +3,9 @@
 # ROADMAP.md Phase 8. Three gold pickups are scripted (games/sandbox/
 # scripts/pickup.lua, see ADR-0013): roll up to one and hold E to collect
 # it — the first content actually using Weft's scripting API in a real,
-# live-playable game rather than a batch test fixture.
+# live-playable game rather than a batch test fixture. A HUD counter
+# ("Pickups: N/3", see ADR-0014) shows progress on screen — the first use of
+# Weft's text-rendering/minimal-UI layer in a real game.
 #
 # System order matters: "player_control" must run before "physics" — it sets
 # a pending force on the ball's rigid body that "physics" consumes and clears
@@ -11,6 +13,9 @@
 # must run after "physics" so it reads the ball's post-physics position for
 # this tick, not last tick's. Script dispatch (the pickups) is automatic —
 # any scene with a Script component gets one, no [[system]] entry needed.
+# "hud" runs last so it counts each tick's despawns with the least possible
+# lag (still one tick behind script dispatch, which itself runs after every
+# [[system]] here — see hud_system's doc comment).
 
 [[entity]]
 name = "ground"
@@ -132,6 +137,7 @@ color = [0.9, 0.75, 0.1]
 [entity.components.Script]
 path = "scripts/pickup.lua"
 function = "on_tick"
+[entity.components.Pickup]
 
 [[entity]]
 name = "pickup_2"
@@ -145,6 +151,7 @@ color = [0.9, 0.75, 0.1]
 [entity.components.Script]
 path = "scripts/pickup.lua"
 function = "on_tick"
+[entity.components.Pickup]
 
 [[entity]]
 name = "pickup_3"
@@ -158,6 +165,7 @@ color = [0.9, 0.75, 0.1]
 [entity.components.Script]
 path = "scripts/pickup.lua"
 function = "on_tick"
+[entity.components.Pickup]
 
 [[entity]]
 name = "player"
@@ -191,9 +199,27 @@ target = [0.0, 0.5, 0.0]
 [entity.components.CameraFollow]
 offset = [0.0, 6.0, 8.0]
 
+[[entity]]
+name = "hud"
+# Weft's text-rendering/minimal-UI layer (ADR-0014), first used for real
+# here: content is overwritten every tick by hud_system, this is just the
+# starting value. A custom imported font, not the engine's embedded
+# fallback — proves `Text.font` works with a real developer-supplied font,
+# not just the zero-config default (games/sandbox/assets-src/
+# PressStart2P-Regular.ttf, OFL-licensed, imported via `engine import`).
+[entity.components.Text]
+content = "Pickups: 0/3"
+x = 16.0
+y = 16.0
+size = 20.0
+color = [1.0, 0.95, 0.4]
+font = "034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d"
+
 [[system]]
 name = "player_control"
 [[system]]
 name = "physics"
 [[system]]
 name = "camera_follow"
+[[system]]
+name = "hud"

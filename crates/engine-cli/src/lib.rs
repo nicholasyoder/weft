@@ -242,13 +242,14 @@ pub struct ImportResult {
     pub fragment: String,
     pub mesh_hash: Option<String>,
     pub texture_hash: Option<String>,
+    pub font_hash: Option<String>,
 }
 
-/// Converts `input` (a glTF file or a loose image file) into `assets_dir`'s
-/// content-addressed store and builds a pasteable scene-text-file fragment
-/// for it. The one place import + fragment-formatting are joined, so both
-/// the `engine import` CLI command and `engine-mcp`'s `import` tool share
-/// this path (see ADR-0007).
+/// Converts `input` (a glTF file, a loose image file, or a font file) into
+/// `assets_dir`'s content-addressed store and builds a pasteable
+/// scene-text-file fragment for it. The one place import + fragment-
+/// formatting are joined, so both the `engine import` CLI command and
+/// `engine-mcp`'s `import` tool share this path (see ADR-0007).
 pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, CliError> {
     let store = engine_assets::AssetStore::new(assets_dir);
     let extension = input
@@ -265,6 +266,7 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 fragment: commands::import::gltf_fragment(&imported),
                 mesh_hash: Some(imported.mesh_hash.clone()),
                 texture_hash: imported.texture_hash.clone(),
+                font_hash: None,
             })
         }
         "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tga" | "webp" => {
@@ -274,6 +276,17 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 fragment: commands::import::texture_fragment(&hash),
                 mesh_hash: None,
                 texture_hash: Some(hash),
+                font_hash: None,
+            })
+        }
+        "ttf" | "otf" => {
+            let hash = engine_assets::import_font(input, &store)
+                .map_err(|e| CliError::from_asset_error(&e))?;
+            Ok(ImportResult {
+                fragment: commands::import::font_fragment(&hash),
+                mesh_hash: None,
+                texture_hash: None,
+                font_hash: Some(hash),
             })
         }
         other => Err(CliError::unsupported_import_extension(input, other)),

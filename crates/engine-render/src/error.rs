@@ -22,6 +22,8 @@ pub enum RenderError {
     },
     #[error(transparent)]
     AssetLoadFailed(#[from] engine_assets::AssetError),
+    #[error("failed to parse font: {0}")]
+    FontParseFailed(String),
 }
 
 impl RenderError {
@@ -36,6 +38,7 @@ impl RenderError {
             Self::SurfaceAcquireFailed(_) => "RENDER_SURFACE_ACQUIRE_ERROR",
             Self::EncodeFailed { .. } => "RENDER_ENCODE_ERROR",
             Self::AssetLoadFailed(_) => "RENDER_ASSET_ERROR",
+            Self::FontParseFailed(_) => "RENDER_FONT_PARSE_ERROR",
         }
     }
 }

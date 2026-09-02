@@ -299,15 +299,16 @@ impl WeftServer {
         }
     }
 
-    /// Converts a glTF file or a loose image file into the content-addressed
-    /// asset store and returns a pasteable scene-text-file fragment — the
-    /// same operation as `engine import`. Unlike the CLI's optional `--out`,
-    /// this always returns the fragment as tool output rather than writing a
-    /// file (an agent driving this tool already has filesystem tools of its
-    /// own if it wants one written out).
+    /// Converts a glTF file, a loose image file, or a font file into the
+    /// content-addressed asset store and returns a pasteable
+    /// scene-text-file fragment — the same operation as `engine import`.
+    /// Unlike the CLI's optional `--out`, this always returns the fragment
+    /// as tool output rather than writing a file (an agent driving this
+    /// tool already has filesystem tools of its own if it wants one
+    /// written out).
     #[tool(
         name = "weft_import",
-        description = "Import a glTF or image file into the asset store and return a pasteable scene-text-file fragment."
+        description = "Import a glTF, image, or font (.ttf/.otf) file into the asset store and return a pasteable scene-text-file fragment."
     )]
     async fn import(&self, Parameters(p): Parameters<ImportParams>) -> CallToolResult {
         let assets_dir = p.assets_dir.unwrap_or_else(|| "assets".to_string());
@@ -319,6 +320,7 @@ impl WeftServer {
                 "fragment": result.fragment,
                 "mesh_hash": result.mesh_hash,
                 "texture_hash": result.texture_hash,
+                "font_hash": result.font_hash,
             })),
             Err(e) => err(e),
         }

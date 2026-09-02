@@ -87,7 +87,7 @@ impl CliError {
         Self::new(
             "IMPORT_UNSUPPORTED_EXTENSION",
             format!(
-                "don't know how to import '{}': unsupported extension '{extension}' (expected .gltf/.glb or a common image format)",
+                "don't know how to import '{}': unsupported extension '{extension}' (expected .gltf/.glb, a common image format, or .ttf/.otf)",
                 path.display()
             ),
         )

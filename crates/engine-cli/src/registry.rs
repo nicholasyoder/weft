@@ -6,7 +6,7 @@
 
 use engine_core::Transform;
 use engine_physics::{physics_step, Collider, RigidBody};
-use engine_render::{Camera, Material, MeshRef};
+use engine_render::{Camera, Material, MeshRef, Text};
 use engine_scene::{ComponentRegistry, SystemRegistry};
 use engine_script::Script;
 
@@ -79,6 +79,16 @@ fn dump_material(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value
         .map(|m| ("Material", serde_json::to_value((*m).clone()).unwrap()))
 }
 
+fn load_text(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
+    b.add(serde_json::from_value::<Text>(v)?);
+    Ok(())
+}
+
+fn dump_text(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
+    e.get::<&Text>()
+        .map(|t| ("Text", serde_json::to_value((*t).clone()).unwrap()))
+}
+
 fn load_script(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
     b.add(serde_json::from_value::<Script>(v)?);
     Ok(())
@@ -136,6 +146,7 @@ pub fn components() -> ComponentRegistry {
     registry.register("Camera", load_camera, dump_camera);
     registry.register("MeshRef", load_mesh_ref, dump_mesh_ref);
     registry.register("Material", load_material, dump_material);
+    registry.register("Text", load_text, dump_text);
     registry.register("Script", load_script, dump_script);
     registry.register("RigidBody", load_rigid_body, dump_rigid_body);
     registry.register("Collider", load_collider, dump_collider);

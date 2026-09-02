@@ -53,3 +53,31 @@ pub struct Material {
     #[serde(default)]
     pub texture: Option<String>,
 }
+
+/// Screen-space HUD text — no `Transform`, since this is 2D UI, not a 3D
+/// billboard (world-space text is a possible future addition, not this
+/// one). `(x, y)` is the text block's top-left origin in pixels, `size` its
+/// pixel height. `font` is a content hash into `engine-assets` (import any
+/// `.ttf`/`.otf` via `engine import`, see ADR-0014); `None` falls back to
+/// the engine's embedded default font, so text renders with zero asset
+/// authoring required.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Text {
+    pub content: String,
+    pub x: f32,
+    pub y: f32,
+    #[serde(default = "default_text_size")]
+    pub size: f32,
+    #[serde(default = "default_text_color")]
+    pub color: [f32; 3],
+    #[serde(default)]
+    pub font: Option<String>,
+}
+
+fn default_text_size() -> f32 {
+    24.0
+}
+
+fn default_text_color() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
+}

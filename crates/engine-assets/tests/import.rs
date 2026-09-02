@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use engine_assets::{import_gltf, import_texture, AssetStore};
+use engine_assets::{import_font, import_gltf, import_texture, AssetStore};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -107,6 +107,35 @@ fn importing_a_loose_image_file_stores_it_as_png() {
         &bytes[0..8],
         b"\x89PNG\r\n\x1a\n",
         "stored bytes should be a PNG"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_a_font_twice_produces_the_same_hash_and_no_new_files() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let first = import_font(&fixture("sample.ttf"), &store).unwrap();
+    assert_eq!(count_files(&dir), 1);
+    let second = import_font(&fixture("sample.ttf"), &store).unwrap();
+    assert_eq!(
+        first, second,
+        "re-importing an unchanged font should be a no-op"
+    );
+    assert_eq!(count_files(&dir), 1);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_a_font_stores_its_bytes_verbatim() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let original = std::fs::read(fixture("sample.ttf")).unwrap();
+    let hash = import_font(&fixture("sample.ttf"), &store).unwrap();
+    let stored = store.get(&hash).unwrap();
+    assert_eq!(
+        stored, original,
+        "font import shouldn't transform the bytes at all — that's engine-render's job, at draw time"
     );
     std::fs::remove_dir_all(&dir).ok();
 }

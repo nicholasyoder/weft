@@ -1,0 +1,31 @@
+[[entity]]
+name = "camera"
+
+[entity.components.Transform]
+position = [2.5, 2.0, 4.0]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "cube"
+
+[entity.components.Transform]
+position = [0.0, 0.5, 0.0]
+
+[entity.components.MeshRef]
+mesh = "cube"
+
+[entity.components.Material]
+color = [0.8, 0.25, 0.2]
+
+[[entity]]
+name = "hud"
+
+[entity.components.Text]
+content = "Weft"
+x = 4.0
+y = 4.0
+size = 20.0
+color = [1.0, 1.0, 1.0]

@@ -8,6 +8,8 @@ const GOLDEN: &str = "tests/fixtures/scenes/render_basic.golden.png";
 const RENDER_IMPORTED_SCENE: &str = "tests/fixtures/scenes/render_imported.toml";
 const IMPORTED_GOLDEN: &str = "tests/fixtures/scenes/render_imported.golden.png";
 const IMPORTED_ASSETS_DIR: &str = "tests/fixtures/assets";
+const RENDER_TEXT_SCENE: &str = "tests/fixtures/scenes/render_text.toml";
+const TEXT_GOLDEN: &str = "tests/fixtures/scenes/render_text.golden.png";
 
 /// Per-channel tolerance for the golden-image comparison. Not blind byte
 /// equality: `lavapipe`/Mesa version drift across machines can shift
@@ -111,6 +113,33 @@ fn render_of_imported_gltf_asset_matches_golden_image_within_tolerance() {
 
     let fresh = image::open(&out).unwrap().into_rgba8();
     let golden = image::open(IMPORTED_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
+#[test]
+fn render_of_text_over_a_3d_scene_matches_golden_image_within_tolerance() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            RENDER_TEXT_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(TEXT_GOLDEN).unwrap().into_rgba8();
     assert!(
         images_match_within_tolerance(&fresh, &golden),
         "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"

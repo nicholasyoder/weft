@@ -4,9 +4,10 @@ use std::path::Path;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
-use crate::components::{Camera, Material, MeshKind, MeshRef};
+use crate::components::{Camera, Material, MeshKind, MeshRef, Text};
 use crate::error::RenderError;
 use crate::mesh::{self, Vertex};
+use crate::text::{self, GlyphAtlas};
 use engine_core::Transform;
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -29,6 +30,22 @@ struct Drawable {
     mesh: MeshKind,
     color: [f32; 3],
     texture: Option<String>,
+}
+
+struct TextDrawable {
+    content: String,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: [f32; 4],
+    font: Option<String>,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ScreenUniform {
+    size: [f32; 2],
+    _pad: [f32; 2],
 }
 
 type MeshBuffers = (wgpu::Buffer, wgpu::Buffer, u32);
@@ -155,6 +172,16 @@ pub struct RenderContext {
     sphere_buffers: MeshBuffers,
     mesh_cache: HashMap<String, MeshBuffers>,
     texture_cache: HashMap<String, wgpu::BindGroup>,
+    // UI/text pass — a second shader/pipeline (alpha-blended, depth-always)
+    // reusing `texture_bind_group_layout`/`sampler` above for its glyph
+    // atlas textures, since an R8Unorm atlas fits that same layout shape.
+    // See ADR-0014.
+    ui_shader: wgpu::ShaderModule,
+    ui_bind_group_layout: wgpu::BindGroupLayout,
+    ui_pipeline_layout: wgpu::PipelineLayout,
+    ui_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    default_atlas: GlyphAtlas,
+    font_cache: HashMap<String, GlyphAtlas>,
     core: GraphicsCore,
 }
 
@@ -262,6 +289,43 @@ impl RenderContext {
             &sampler,
         );
 
+        let ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("weft-ui-shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("ui_shader.wgsl").into()),
+        });
+
+        let ui_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("weft-ui-uniform-layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let ui_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("weft-ui-pipeline-layout"),
+            bind_group_layouts: &[
+                Some(&ui_bind_group_layout),
+                Some(&texture_bind_group_layout),
+            ],
+            immediate_size: 0,
+        });
+
+        let default_atlas = GlyphAtlas::build(
+            device,
+            &core.queue,
+            &texture_bind_group_layout,
+            &sampler,
+            text::DEFAULT_FONT_BYTES,
+        )?;
+
         Ok(Self {
             core,
             shader,
@@ -276,6 +340,12 @@ impl RenderContext {
             sphere_buffers,
             mesh_cache: HashMap::new(),
             texture_cache: HashMap::new(),
+            ui_shader,
+            ui_bind_group_layout,
+            ui_pipeline_layout,
+            ui_pipelines: HashMap::new(),
+            default_atlas,
+            font_cache: HashMap::new(),
         })
     }
 
@@ -334,6 +404,58 @@ impl RenderContext {
             .clone()
     }
 
+    /// The UI/text pipeline variant: alpha-blended (the 3D pipeline never
+    /// blends — `blend: None` there), and `depth_compare: Always` with
+    /// writes disabled so HUD text always draws on top of the 3D scene
+    /// regardless of what's in the shared depth buffer, without needing a
+    /// second render pass.
+    fn ui_pipeline_for(&mut self, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        let device = &self.core.device;
+        let shader = &self.ui_shader;
+        let pipeline_layout = &self.ui_pipeline_layout;
+        self.ui_pipelines
+            .entry(format)
+            .or_insert_with(|| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("weft-ui-pipeline"),
+                    layout: Some(pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Some(text::ui_vertex_layout())],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(wgpu::CompareFunction::Always),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .clone()
+    }
+
     /// Records one frame's render pass into `encoder` against `color_view`
     /// (of `color_format`) and `depth_view`. Doesn't submit or present —
     /// that's the caller's job, since the offscreen path needs to append a
@@ -344,16 +466,22 @@ impl RenderContext {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         drawables: &[Drawable],
+        texts: &[TextDrawable],
         view_proj: Mat4,
         color_view: &wgpu::TextureView,
         color_format: wgpu::TextureFormat,
         depth_view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
         assets_dir: &Path,
     ) -> Result<(), RenderError> {
         let pipeline = self.pipeline_for(color_format);
+        let ui_pipeline = self.ui_pipeline_for(color_format);
         let asset_store = engine_assets::AssetStore::new(assets_dir);
 
         let mut per_draw_state = Vec::with_capacity(drawables.len());
+        let mut ui_buffers: Vec<(wgpu::Buffer, wgpu::Buffer, u32)> = Vec::new();
+        let mut ui_uniform_state: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -466,6 +594,108 @@ impl RenderContext {
                 pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..index_count, 0, 0..1);
             }
+
+            if !texts.is_empty() {
+                let screen_uniform = ScreenUniform {
+                    size: [width as f32, height as f32],
+                    _pad: [0.0, 0.0],
+                };
+                let screen_buffer =
+                    self.core
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("weft-ui-screen-uniform"),
+                            contents: bytemuck::bytes_of(&screen_uniform),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+                let screen_bind_group =
+                    self.core
+                        .device
+                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("weft-ui-screen-bind-group"),
+                            layout: &self.ui_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: screen_buffer.as_entire_binding(),
+                            }],
+                        });
+                ui_uniform_state.push((screen_buffer, screen_bind_group));
+                let (_, screen_bind_group) = ui_uniform_state.last().unwrap();
+
+                pass.set_pipeline(&ui_pipeline);
+                pass.set_bind_group(0, screen_bind_group, &[]);
+
+                // Grouped by font (a `BTreeMap` for stable iteration order,
+                // per ADR-0002) so a HUD using two fonts costs two draw
+                // calls, not one per `Text` entity.
+                let mut groups: std::collections::BTreeMap<Option<&str>, Vec<&TextDrawable>> =
+                    std::collections::BTreeMap::new();
+                for t in texts {
+                    groups.entry(t.font.as_deref()).or_default().push(t);
+                }
+
+                for (font_key, group) in &groups {
+                    if let Some(hash) = font_key {
+                        if !self.font_cache.contains_key(*hash) {
+                            let bytes = asset_store.get(hash)?;
+                            let atlas = GlyphAtlas::build(
+                                &self.core.device,
+                                &self.core.queue,
+                                &self.texture_bind_group_layout,
+                                &self.sampler,
+                                &bytes,
+                            )?;
+                            self.font_cache.insert((*hash).to_string(), atlas);
+                        }
+                    }
+                    let atlas = match font_key {
+                        None => &self.default_atlas,
+                        Some(hash) => self.font_cache.get(*hash).unwrap(),
+                    };
+
+                    let mut vertices = Vec::new();
+                    let mut indices = Vec::new();
+                    for t in group {
+                        text::layout(
+                            atlas,
+                            &t.content,
+                            t.x,
+                            t.y,
+                            t.size,
+                            t.color,
+                            &mut vertices,
+                            &mut indices,
+                        );
+                    }
+                    if indices.is_empty() {
+                        continue;
+                    }
+
+                    let vbuf =
+                        self.core
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("weft-ui-vertices"),
+                                contents: bytemuck::cast_slice(&vertices),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+                    let ibuf =
+                        self.core
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("weft-ui-indices"),
+                                contents: bytemuck::cast_slice(&indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                    ui_buffers.push((vbuf, ibuf, indices.len() as u32));
+                    let (vbuf, ibuf, index_count) = ui_buffers.last().unwrap();
+
+                    pass.set_bind_group(1, &atlas.bind_group, &[]);
+                    pass.set_vertex_buffer(0, vbuf.slice(..));
+                    pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..*index_count, 0, 0..1);
+                }
+            }
         }
 
         Ok(())
@@ -494,7 +724,7 @@ fn extract_scene(
     world: &hecs::World,
     width: u32,
     height: u32,
-) -> Result<(Mat4, Vec<Drawable>), RenderError> {
+) -> Result<(Mat4, Vec<Drawable>, Vec<TextDrawable>), RenderError> {
     let mut cameras: Vec<_> = world
         .query::<(&Transform, &Camera)>()
         .iter()
@@ -524,6 +754,25 @@ fn extract_scene(
         .collect();
     drawables.sort_by_key(|(e, _)| e.to_bits());
 
+    let mut texts: Vec<_> = world
+        .query::<&Text>()
+        .iter()
+        .map(|(e, t)| {
+            (
+                e,
+                TextDrawable {
+                    content: t.content.clone(),
+                    x: t.x,
+                    y: t.y,
+                    size: t.size,
+                    color: [t.color[0], t.color[1], t.color[2], 1.0],
+                    font: t.font.clone(),
+                },
+            )
+        })
+        .collect();
+    texts.sort_by_key(|(e, _)| e.to_bits());
+
     let aspect = width as f32 / height as f32;
     let projection = Mat4::perspective_rh(
         camera.fov_y_degrees.to_radians(),
@@ -534,7 +783,11 @@ fn extract_scene(
     let view = Mat4::look_at_rh(camera_transform.position, camera.target, Vec3::Y);
     let view_proj = projection * view;
 
-    Ok((view_proj, drawables.into_iter().map(|(_, d)| d).collect()))
+    Ok((
+        view_proj,
+        drawables.into_iter().map(|(_, d)| d).collect(),
+        texts.into_iter().map(|(_, t)| t).collect(),
+    ))
 }
 
 /// Renders `world` at `width`x`height` and returns the pixels. Builds a
@@ -566,7 +819,7 @@ pub fn render_scene_with_context(
     height: u32,
     assets_dir: &Path,
 ) -> Result<image::RgbaImage, RenderError> {
-    let (view_proj, drawables) = extract_scene(world, width, height)?;
+    let (view_proj, drawables, texts) = extract_scene(world, width, height)?;
 
     let color_texture = ctx.core.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("weft-color-target"),
@@ -594,10 +847,13 @@ pub fn render_scene_with_context(
     ctx.draw(
         &mut encoder,
         &drawables,
+        &texts,
         view_proj,
         &color_view,
         COLOR_FORMAT,
         &depth_view,
+        width,
+        height,
         assets_dir,
     )?;
 
@@ -620,7 +876,7 @@ pub(crate) fn draw_to_surface(
     height: u32,
     assets_dir: &Path,
 ) -> Result<wgpu::CommandBuffer, RenderError> {
-    let (view_proj, drawables) = extract_scene(world, width, height)?;
+    let (view_proj, drawables, texts) = extract_scene(world, width, height)?;
     let depth_view = make_depth_view(&ctx.core.device, width, height);
     let mut encoder = ctx
         .core
@@ -631,10 +887,13 @@ pub(crate) fn draw_to_surface(
     ctx.draw(
         &mut encoder,
         &drawables,
+        &texts,
         view_proj,
         color_view,
         color_format,
         &depth_view,
+        width,
+        height,
         assets_dir,
     )?;
     Ok(encoder.finish())

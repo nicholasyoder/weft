@@ -2,11 +2,12 @@ mod components;
 mod error;
 mod gpu;
 pub mod mesh;
+mod text;
 mod window;
 
 use std::path::Path;
 
-pub use components::{Camera, Material, MeshKind, MeshRef};
+pub use components::{Camera, Material, MeshKind, MeshRef, Text};
 pub use error::RenderError;
 pub use gpu::{render_scene, render_scene_with_context, RenderContext};
 pub use window::WindowRenderer;

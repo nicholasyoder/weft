@@ -6,9 +6,9 @@ Seeded by a full capability audit of the engine (2026-09-01) against what a full
 
 ---
 
-## Text rendering + a minimal UI layer
+## Text rendering + a minimal UI layer — **done** (2026-09-01)
 
-`engine-render` has no glyph/font pipeline at all today — no HUD, menu, dialogue box, or even a debug overlay is possible without one. Worth building before the rendering pipeline picks up shadows, PBR, and post-processing on top of it (Tier 2/3), while there's less to integrate against. Per [ADR-0001](../decisions/0001-rust-3d-from-scratch.md) and the engine's own thesis, any UI layer has to sit strictly on top of the same CLI/API surface everything else uses — never a capability's only entry point.
+`engine-render` gained a `fontdue`-based glyph atlas and a second, alpha-blended render pipeline appended to the existing single pass — no HUD/debug-overlay/menu capability existed before this (see [ADR-0014](../decisions/0014-text-rendering-and-minimal-ui.md)). Scope: screen-space `Text` only (no world-space billboards, panels, buttons, or rich text yet), but **arbitrary developer-supplied fonts work from the start**, not as a deferred follow-up — imported via the existing `engine import` command, lazily rasterized and cached per content hash exactly like imported meshes/textures already are, alongside one embedded fallback font so text renders with zero asset authoring. `games/sandbox`'s HUD ("Pickups: N/3") is the concrete proof, using a real imported custom font, not just the fallback. Per [ADR-0001](../decisions/0001-rust-3d-from-scratch.md) and the engine's own thesis, the UI layer sits strictly on top of the same CLI/API surface everything else uses (both `engine render` and `engine play` share the one `RenderContext::draw()` path) — never a capability's only entry point, satisfied automatically rather than needing a separate design pass.
 
 ## Audio playback baseline
 

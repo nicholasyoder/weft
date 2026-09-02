@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use engine_core::Transform;
-use engine_render::{render_scene, Camera, Material, MeshKind, MeshRef};
+use engine_render::{render_scene, Camera, Material, MeshKind, MeshRef, Text};
 use glam::Vec3;
 
 fn scratch_assets_dir() -> PathBuf {
@@ -71,11 +71,87 @@ fn rendering_the_same_world_twice_is_byte_identical() {
     let mut world = hecs::World::new();
     world.spawn(camera_at(Vec3::new(2.0, 2.0, 4.0)));
     world.spawn(cube_at(Vec3::ZERO));
+    world.spawn((Text {
+        content: "hello".to_string(),
+        x: 4.0,
+        y: 4.0,
+        size: 16.0,
+        color: [1.0, 1.0, 1.0],
+        font: None,
+    },));
 
     let assets_dir = scratch_assets_dir();
     let a = render_scene(&world, 48, 48, &assets_dir).unwrap();
     let b = render_scene(&world, 48, 48, &assets_dir).unwrap();
     assert_eq!(a.into_raw(), b.into_raw());
+}
+
+#[test]
+fn rendering_text_with_the_default_font_produces_non_blank_output() {
+    let mut world = hecs::World::new();
+    world.spawn(camera_at(Vec3::new(2.0, 2.0, 4.0)));
+    world.spawn((Text {
+        content: "Weft".to_string(),
+        x: 2.0,
+        y: 2.0,
+        size: 24.0,
+        color: [1.0, 1.0, 1.0],
+        font: None,
+    },));
+
+    let assets_dir = scratch_assets_dir();
+    let image = render_scene(&world, 64, 64, &assets_dir).unwrap();
+    let clear = image.get_pixel(63, 63);
+    assert!(
+        image.pixels().any(|p| p != clear),
+        "expected the default-font text to draw something other than the clear color"
+    );
+}
+
+#[test]
+fn rendering_text_with_an_imported_custom_font_produces_non_blank_output() {
+    let assets_dir = scratch_assets_dir();
+    let store = engine_assets::AssetStore::new(&assets_dir);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../engine-assets/tests/fixtures/sample.ttf");
+    let font_hash = engine_assets::import_font(&fixture, &store).unwrap();
+
+    let mut world = hecs::World::new();
+    world.spawn(camera_at(Vec3::new(2.0, 2.0, 4.0)));
+    world.spawn((Text {
+        content: "Weft".to_string(),
+        x: 2.0,
+        y: 2.0,
+        size: 24.0,
+        color: [1.0, 1.0, 1.0],
+        font: Some(font_hash),
+    },));
+
+    let image = render_scene(&world, 64, 64, &assets_dir).unwrap();
+    let clear = image.get_pixel(63, 63);
+    assert!(
+        image.pixels().any(|p| p != clear),
+        "expected the custom-font text to draw something other than the clear color"
+    );
+    std::fs::remove_dir_all(&assets_dir).ok();
+}
+
+#[test]
+fn rendering_text_with_an_unknown_font_hash_is_a_structured_error() {
+    let mut world = hecs::World::new();
+    world.spawn(camera_at(Vec3::new(2.0, 2.0, 4.0)));
+    world.spawn((Text {
+        content: "Weft".to_string(),
+        x: 2.0,
+        y: 2.0,
+        size: 24.0,
+        color: [1.0, 1.0, 1.0],
+        font: Some("does-not-exist".to_string()),
+    },));
+
+    let assets_dir = scratch_assets_dir();
+    let err = render_scene(&world, 16, 16, &assets_dir).unwrap_err();
+    assert_eq!(err.code(), "RENDER_ASSET_ERROR");
 }
 
 #[test]
