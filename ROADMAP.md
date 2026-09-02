@@ -18,7 +18,7 @@ Locked decisions so far: Rust, 3D from day one, building from scratch on top of 
 
 ## Workspace layout (as built)
 
-Crate boundaries have held for 8 phases without needing rework — no longer the tentative sketch the original draft of this section was, but still not frozen: change the shape the moment a real need contradicts it.
+Crate boundaries have held for 14 phases without needing rework — no longer the tentative sketch the original draft of this section was, but still not frozen: change the shape the moment a real need contradicts it.
 
 ```
 weft/
@@ -26,19 +26,21 @@ weft/
   crates/
     engine-core/              # ECS integration (hecs), math re-exports (glam), fixed-timestep scheduler, seeded RNG, the Resources extension bag
     engine-scene/              # TOML scene format; ComponentRegistry/SystemRegistry-driven loader with no compile-time knowledge of game types
-    engine-assets/             # content-addressed binary asset store; glTF + image import
-    engine-render/             # wgpu renderer — offscreen PNG export and live windowed presentation over one shared pipeline
+    engine-assets/             # content-addressed binary asset store; glTF + image import, plus texture/font/audio import
+    engine-render/             # wgpu renderer — offscreen PNG export and live windowed presentation, mesh/text/skinned-mesh passes over one shared pipeline
     engine-physics/            # rapier3d integration behind engine-native component/system types
+    engine-anim/                # deterministic skeletal animation sampling (Animator, clip playback) feeding engine-render's GPU skinning
+    engine-audio/               # kira-backed live audio device output plus a hand-rolled deterministic offline mixdown
     engine-script/             # mlua-backed Lua scripting for content-level logic, plus scene/script hot-reload
-    engine-cli/                # the `engine` binary: run/test/inspect/replay/render/import/play, --watch
+    engine-cli/                # the `engine` binary: run/test/inspect/replay/render/mix/import/play, --watch
     engine-mcp/                 # thin MCP server (rmcp) wrapping engine-cli's operations as typed tools
   games/
-    sandbox/                  # first real test game — physics playground, WASD, camera-follow, imported assets
+    sandbox/                  # first real test game — physics playground, WASD, camera-follow, pickups, HUD text, imported assets
   tools/
     asset-gen/                 # standalone headless-Blender scripts (ADR-0009) — outside the Cargo workspace on purpose
   docs/
     decisions/                 # ADRs — why a decision was made and what would change it
-    roadmap/                   # completed-phase history, plus the forward-looking capability tiers
+    roadmap/                   # completed-phase history, the forward-looking capability tiers, and known-issues.md (engineering debt)
   research/                   # the original research/synthesis docs the early architecture was built on
 ```
 
@@ -46,12 +48,13 @@ weft/
 
 ## How this roadmap is organized
 
-- [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) — Phases 0–8, done. A historical build log, like `docs/decisions/` — not a place to plan new work.
-- Forward-looking work is organized into four priority tiers, seeded by a full capability audit of the engine (2026-09-01) against what a fully realized game — realistic graphics, audio, animation, UI, everything a shipped game needs — actually requires:
-  - [Tier 1 — Foundational](docs/roadmap/tier-1-foundational.md)
+- [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) — Phases 0–14, done. A historical build log, like `docs/decisions/` — not a place to plan new work.
+- Forward-looking *capability* work (things the engine doesn't do yet) is organized into four priority tiers, seeded by a full capability audit of the engine (2026-09-01) against what a fully realized game — realistic graphics, audio, animation, UI, everything a shipped game needs — actually requires. **Tier 1 is fully closed as of Phase 14 (2026-09-01)**:
+  - [Tier 1 — Foundational](docs/roadmap/tier-1-foundational.md) — done
   - [Tier 2 — Visual & gameplay realism](docs/roadmap/tier-2-visual-and-gameplay-realism.md)
   - [Tier 3 — Polish & feel](docs/roadmap/tier-3-polish-and-feel.md)
   - [Tier 4 — Ship readiness](docs/roadmap/tier-4-ship-readiness.md)
+- [`docs/roadmap/known-issues.md`](docs/roadmap/known-issues.md) — a *different* kind of list: not missing capabilities, but places the code doesn't do what its own docs/tests/design already claim (bugs, a real Lua sandbox gap, architectural debt, process/testing gaps), surfaced by a full critical review (2026-09-02). Check this before starting new tier work — some items there (e.g. no per-system error channel) will shape how new capability work should be built, not just get fixed independently later.
 - **The tiers are a suggested order, not a queue.** Tier 1 is "foundational" in a literal sense — later tiers build on it, or retrofitting it after the fact is expensive — not because everything in it must happen strictly before anything in Tier 2. Pull whichever item, from whichever tier, a concrete need (usually `games/sandbox`) actually points to next. That's the same "let real usage demand the shape" discipline every phase in the completed history already followed.
 - As tier items actually get built, record what happened in `docs/roadmap/completed-phases.md` as a new numbered phase (Phase 9 onward), the same way Phases 0–8 were recorded — and write an ADR in `docs/decisions/` for any decision worth remembering *why* it was made.
 
