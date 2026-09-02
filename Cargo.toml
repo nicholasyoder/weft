@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/engine-core",
+    "crates/engine-types",
     "crates/engine-scene",
     "crates/engine-assets",
     "crates/engine-render",

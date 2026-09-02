@@ -24,7 +24,8 @@ Crate boundaries have held for 14 phases without needing rework — no longer th
 weft/
   Cargo.toml                 # workspace root
   crates/
-    engine-core/              # ECS integration (hecs), math re-exports (glam), fixed-timestep scheduler, seeded RNG, the Resources extension bag
+    engine-core/              # ECS integration (hecs), fixed-timestep scheduler, seeded RNG, the Resources extension bag; re-exports engine-types
+    engine-types/              # leaf crate: Transform/JointPalette/AudioSettings/SoundEvent/Input/KeyCode/AssetsDir — shared vocabulary a producer/consumer crate pair needs with no engine-core dependency edge
     engine-scene/              # TOML scene format; ComponentRegistry/SystemRegistry-driven loader with no compile-time knowledge of game types
     engine-assets/             # content-addressed binary asset store; glTF + image import, plus texture/font/audio import
     engine-render/             # wgpu renderer — offscreen PNG export and live windowed presentation, mesh/text/skinned-mesh passes over one shared pipeline

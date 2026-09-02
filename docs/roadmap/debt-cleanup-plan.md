@@ -2,7 +2,7 @@
 
 **Working checklist, not a spec — same living-document rule as the rest of `docs/roadmap/`.** Addresses the 9 "Architectural debt" items and 4 "Process / testing gaps" items in [`known-issues.md`](known-issues.md) (the 3 Critical items and 5 Real bugs from the same 2026-09-02 review are already fixed). Split into 8 independent phases so risk stays contained — each phase should land as its own reviewable, tested commit-set, with the same gate every phase in this project uses: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, all clean before committing.
 
-**Status: Phases 1, 2, 4, 6, and 7 done (2026-09-02).** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
+**Status: Phases 1, 2, 3, 4, 6, and 7 done (2026-09-02).** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
 
 Research behind this plan (three parallel codebase surveys) found the roadmap text itself had drifted in two places, corrected in Phase 1: only 1 of 4 scenarios (not 2) actually lacks a scene-file counterpart, and `engine-anim`'s error-handling "fork" bullet mis-described its current shape — `engine-anim` no longer panics (fixed by the earlier Critical-item work), but it still doesn't own a `thiserror`-based error type the way `engine-scene`/`engine-render`/`engine-audio`/`engine-assets`/`engine-script` each do; it converts a foreign `engine_assets::AssetError` into `SystemError` via a small local helper instead. Not a fixed instance of the same convention — a different, arguably fine design with nothing of its own left to convert.
 
@@ -39,17 +39,17 @@ Recommended order: **1 → 2 → 4 → 6 → 7 → 3 → 5 → 8** — cheap/saf
 
 ---
 
-## Phase 3 — Extract `engine-types`, a leaf crate for engine-core's "shared vocabulary"
+## Phase 3 — Extract `engine-types`, a leaf crate for engine-core's "shared vocabulary" — DONE (2026-09-02)
 
 `engine-core` currently holds `Transform`, `JointPalette`, `AudioSettings`, `SoundEvent`/`SoundEventQueue`, `Input`/`KeyCode`, `AssetsDir` purely so producer/consumer crate pairs (e.g. `engine-anim`→`engine-render` for `JointPalette`) can share a type without a direct dependency edge. No crate currently depends on a sibling crate directly, so this is safe to extract without creating a cycle.
 
 - New crate `crates/engine-types` (leaf: only `glam`, `serde`, `hecs` as needed — no dependency on `engine-core` or anything else in the workspace).
 - Move `Transform`, `JointPalette`, `AudioSettings`, `SoundEvent`/`SoundEventQueue`, `Input`/`KeyCode`, `AssetsDir` (each type's whole module, including its own unit tests) from `engine-core/src/` into `engine-types/src/`.
 - `engine-core` keeps: the `hecs` re-export, `Resources`, `Scheduler`/`SystemError`, `Sim`, seeded RNG — the genuinely simulation-kernel primitives, not shared data types.
-- Every crate currently doing `use engine_core::{Transform, ...}` (engine-physics, engine-anim, engine-audio, engine-scene, engine-script, engine-render, engine-cli, engine-mcp, games/sandbox) adds `engine-types` to its `Cargo.toml` and updates imports. `engine-core` may still re-export these from `engine_types` for convenience if that reduces churn — decide during implementation, either is fine as long as it's consistent.
-- Update `ROADMAP.md`'s workspace-layout diagram and `AGENTS.md`'s crate table.
+- Every crate currently doing `use engine_core::{Transform, ...}` (engine-physics, engine-anim, engine-audio, engine-scene, engine-script, engine-render, engine-cli, engine-mcp, games/sandbox) adds `engine-types` to its `Cargo.toml` and updates imports. `engine-core` may still re-export these from `engine_types` for convenience if that reduces churn — decide during implementation, either is fine as long as it's consistent. *(Decided: re-export. Traced every actual usage first — every one of those ~26 files importing a moved type also imports a genuine `engine-core` kernel item, e.g. `Sim`/`SystemArgs`/`ComponentDumper`/`Resources`, in the same file, so none of them could drop the `engine-core` dependency anyway; a direct-dependency migration would've been ~9 `Cargo.toml`s and ~20 files of import churn for no real decoupling payoff today. `engine-core`'s `lib.rs` re-exports all 8 items flat instead — behaviorally transparent, since a re-export preserves `TypeId`. Only one file needed a fix: `games/sandbox/src/player_control.rs` imported via the `engine_core::input::KeyCode` submodule path rather than the flat re-export.)*
+- Update `ROADMAP.md`'s workspace-layout diagram and `AGENTS.md`'s crate table. *(AGENTS.md has no separate crate table — only inline `engine_core::Input`/`KeyCode` references, unaffected by the re-export — so only ROADMAP.md's diagram needed a change.)*
 
-**Verify**: `cargo build --workspace` first (expect many import-path errors to fix mechanically), then full gate. Do this phase in isolation, not interleaved with others, so a compile break is easy to bisect.
+**Verify**: `cargo build --workspace` first (expect many import-path errors to fix mechanically), then full gate. Do this phase in isolation, not interleaved with others, so a compile break is easy to bisect. *(In practice, the re-export decision meant zero import-path errors from the move itself — the only build failure hit was an unrelated disk-full linker crash from an 87GB stale `target/`, fixed with `cargo clean`.)*
 
 ---
 

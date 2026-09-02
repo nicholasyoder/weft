@@ -3,8 +3,8 @@
 //! gameplay code on top of the engine's registry extension point, with zero
 //! new engine mechanism (see ROADMAP.md Phase 8 / docs/decisions/0010).
 
-use engine_core::input::KeyCode;
 use engine_core::scheduler::{SystemArgs, SystemError};
+use engine_core::KeyCode;
 use engine_physics::PhysicsState;
 use serde::{Deserialize, Serialize};
 

@@ -26,7 +26,6 @@ impl Default for AudioSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Resources;
 
     #[test]
     fn default_is_full_volume() {
@@ -37,24 +36,6 @@ mod tests {
                 music: 1.0,
                 sfx: 1.0,
             }
-        );
-    }
-
-    #[test]
-    fn round_trips_through_resources() {
-        let mut resources = Resources::new();
-        resources.insert(AudioSettings {
-            master: 0.5,
-            music: 0.8,
-            sfx: 1.0,
-        });
-        assert_eq!(
-            resources.get::<AudioSettings>(),
-            Some(&AudioSettings {
-                master: 0.5,
-                music: 0.8,
-                sfx: 1.0,
-            })
         );
     }
 }

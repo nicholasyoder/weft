@@ -840,7 +840,7 @@ dependencies = [
 name = "engine-core"
 version = "0.1.0"
 dependencies = [
- "glam 0.29.3",
+ "engine-types",
  "hecs",
  "rand",
  "rand_chacha",
@@ -917,6 +917,15 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "engine-types"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
+ "hecs",
+ "serde",
 ]
 
 [[package]]

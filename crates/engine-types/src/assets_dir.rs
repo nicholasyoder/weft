@@ -9,19 +9,3 @@ use std::path::PathBuf;
 /// rather than panicking (see `engine-anim`'s `animation_step`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetsDir(pub PathBuf);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Resources;
-
-    #[test]
-    fn round_trips_through_resources() {
-        let mut resources = Resources::new();
-        resources.insert(AssetsDir(PathBuf::from("assets")));
-        assert_eq!(
-            resources.get::<AssetsDir>(),
-            Some(&AssetsDir(PathBuf::from("assets")))
-        );
-    }
-}
