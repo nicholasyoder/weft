@@ -34,9 +34,4 @@ fn jitter_system_ambient(args: &mut SystemArgs) -> Result<(), SystemError> {
     Ok(())
 }
 
-fn dump_position(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Position>()
-        .map(|p| ("Position", serde_json::to_value(&*p).unwrap()))
-}
-
-pub const DUMPERS: &[ComponentDumper] = &[dump_position];
+pub const DUMPERS: &[ComponentDumper] = &[crate::registry::dump::<Position>];

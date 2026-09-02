@@ -39,6 +39,13 @@ impl Resources {
             .downcast_mut::<T>()
             .expect("TypeId-keyed entry downcasts to its own type")
     }
+
+    pub fn remove<T: 'static>(&mut self) -> Option<T> {
+        self.map
+            .remove(&TypeId::of::<T>())
+            .and_then(|b| b.downcast::<T>().ok())
+            .map(|b| *b)
+    }
 }
 
 #[cfg(test)]
@@ -96,5 +103,19 @@ mod tests {
             .0 += 1;
         assert_eq!(calls, 1);
         assert_eq!(resources.get::<Counter>(), Some(&Counter(2)));
+    }
+
+    #[test]
+    fn remove_returns_the_value_and_clears_the_slot() {
+        let mut resources = Resources::new();
+        resources.insert(Counter(5));
+        assert_eq!(resources.remove::<Counter>(), Some(Counter(5)));
+        assert!(resources.get::<Counter>().is_none());
+    }
+
+    #[test]
+    fn remove_on_absent_type_returns_none() {
+        let mut resources = Resources::new();
+        assert_eq!(resources.remove::<Counter>(), None);
     }
 }

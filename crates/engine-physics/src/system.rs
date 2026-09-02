@@ -115,7 +115,10 @@ pub fn physics_step(args: &mut SystemArgs) -> Result<(), SystemError> {
     state.world.integration_parameters.dt = args.dt;
     state.world.step();
 
-    for (&entity, &handle) in state.bodies.iter() {
+    let mut poses: Vec<(hecs::Entity, rp::RigidBodyHandle)> =
+        state.bodies.iter().map(|(&e, &h)| (e, h)).collect();
+    poses.sort_by_key(|(e, _)| e.to_bits());
+    for (entity, handle) in poses {
         let Some(body) = state.world.bodies.get_mut(handle) else {
             continue;
         };

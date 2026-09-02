@@ -51,14 +51,14 @@ pub(crate) fn movement_system(args: &mut SystemArgs) -> Result<(), SystemError> 
     Ok(())
 }
 
-pub(crate) fn dump_position(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Position>()
-        .map(|p| ("Position", serde_json::to_value(&*p).unwrap()))
+impl crate::registry::Named for Position {
+    const NAME: &'static str = "Position";
+}
+impl crate::registry::Named for Velocity {
+    const NAME: &'static str = "Velocity";
 }
 
-pub(crate) fn dump_velocity(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Velocity>()
-        .map(|v| ("Velocity", serde_json::to_value(&*v).unwrap()))
-}
-
-pub const DUMPERS: &[ComponentDumper] = &[dump_position, dump_velocity];
+pub const DUMPERS: &[ComponentDumper] = &[
+    crate::registry::dump::<Position>,
+    crate::registry::dump::<Velocity>,
+];

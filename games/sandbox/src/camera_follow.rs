@@ -31,6 +31,10 @@ fn default_offset() -> Vec3 {
     Vec3::new(0.0, 6.0, 8.0)
 }
 
+impl engine_cli::registry::Named for CameraFollow {
+    const NAME: &'static str = "CameraFollow";
+}
+
 /// Must run *after* "physics" in scene order so it reads the target's
 /// post-physics position for this tick, not last tick's (avoiding a
 /// one-tick lag between the ball moving and the camera catching up).

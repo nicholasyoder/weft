@@ -17,7 +17,6 @@ pub struct Fuse {
     pub ticks_remaining: i64,
 }
 
-pub(crate) fn dump_fuse(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Fuse>()
-        .map(|f| ("Fuse", serde_json::to_value(*f).unwrap()))
+impl crate::registry::Named for Fuse {
+    const NAME: &'static str = "Fuse";
 }

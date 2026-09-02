@@ -12,214 +12,108 @@ use engine_render::{Camera, Material, MeshRef, Text};
 use engine_scene::{ComponentRegistry, SystemRegistry};
 use engine_script::Script;
 
-use crate::scenarios::basic::{dump_position, dump_velocity, movement_system, Position, Velocity};
-use crate::scenarios::despawn_demo::{despawn_after_system, dump_despawn_after, DespawnAfter};
-use crate::scenarios::scripted_demo::{dump_fuse, Fuse};
+use crate::scenarios::basic::{movement_system, Position, Velocity};
+use crate::scenarios::despawn_demo::{despawn_after_system, DespawnAfter};
+use crate::scenarios::scripted_demo::Fuse;
 
-fn load_position(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Position>(v)?);
+/// Supplies a component type's scene-file name, so [`load`]/[`dump`] can be
+/// generic over `T` instead of every component needing its own hand-written
+/// `load_x`/`dump_x` pair (see `docs/roadmap/known-issues.md`'s
+/// registry-boilerplate item).
+pub trait Named {
+    const NAME: &'static str;
+}
+
+/// Deserializes any `Named` component from its scene-file JSON value.
+/// Registered per type as `load::<T>` — an ordinary monomorphized function
+/// item, which coerces to the plain `fn` pointer `ComponentLoader` expects
+/// exactly like a hand-written loader would.
+pub fn load<T>(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error>
+where
+    T: serde::de::DeserializeOwned + hecs::Component,
+{
+    b.add(serde_json::from_value::<T>(v)?);
     Ok(())
 }
 
-fn load_velocity(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Velocity>(v)?);
-    Ok(())
+/// Dumps any `Named` component to its scene-file JSON value. Bound on
+/// `Serialize` alone (not `Clone`) — `serde_json::to_value(&*c)` uses
+/// serde's blanket `impl Serialize for &T`, so this covers `Copy` types,
+/// `Clone`-only types, and types with neither (e.g. `Position`/`Velocity`)
+/// uniformly.
+pub fn dump<T>(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)>
+where
+    T: Named + serde::Serialize + hecs::Component,
+{
+    e.get::<&T>()
+        .map(|c| (T::NAME, serde_json::to_value(&*c).unwrap()))
 }
 
-fn load_transform(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Transform>(v)?);
-    Ok(())
+impl Named for Transform {
+    const NAME: &'static str = "Transform";
 }
-
-pub(crate) fn dump_transform(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Transform>()
-        .map(|t| ("Transform", serde_json::to_value(*t).unwrap()))
+impl Named for Camera {
+    const NAME: &'static str = "Camera";
 }
-
-fn load_camera(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Camera>(v)?);
-    Ok(())
+impl Named for MeshRef {
+    const NAME: &'static str = "MeshRef";
 }
-
-fn dump_camera(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Camera>()
-        .map(|c| ("Camera", serde_json::to_value(*c).unwrap()))
+impl Named for Material {
+    const NAME: &'static str = "Material";
 }
-
-fn load_mesh_ref(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<MeshRef>(v)?);
-    Ok(())
+impl Named for Text {
+    const NAME: &'static str = "Text";
 }
-
-fn dump_mesh_ref(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&MeshRef>()
-        .map(|m| ("MeshRef", serde_json::to_value((*m).clone()).unwrap()))
+impl Named for Script {
+    const NAME: &'static str = "Script";
 }
-
-fn load_material(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Material>(v)?);
-    Ok(())
+impl Named for RigidBody {
+    const NAME: &'static str = "RigidBody";
 }
-
-fn dump_material(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Material>()
-        .map(|m| ("Material", serde_json::to_value((*m).clone()).unwrap()))
+impl Named for Collider {
+    const NAME: &'static str = "Collider";
 }
-
-fn load_text(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Text>(v)?);
-    Ok(())
-}
-
-fn dump_text(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Text>()
-        .map(|t| ("Text", serde_json::to_value((*t).clone()).unwrap()))
-}
-
-fn load_script(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Script>(v)?);
-    Ok(())
-}
-
-fn dump_script(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Script>()
-        .map(|s| ("Script", serde_json::to_value((*s).clone()).unwrap()))
-}
-
-fn load_rigid_body(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<RigidBody>(v)?);
-    Ok(())
-}
-
-pub(crate) fn dump_rigid_body(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&RigidBody>()
-        .map(|r| ("RigidBody", serde_json::to_value(*r).unwrap()))
-}
-
-fn load_collider(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Collider>(v)?);
-    Ok(())
-}
-
-pub(crate) fn dump_collider(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Collider>()
-        .map(|c| ("Collider", serde_json::to_value(*c).unwrap()))
-}
-
-fn load_despawn_after(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<DespawnAfter>(v)?);
-    Ok(())
-}
-
-fn load_fuse(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Fuse>(v)?);
-    Ok(())
-}
-
-fn load_animator(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Animator>(v)?);
-    Ok(())
-}
-
-fn dump_animator(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Animator>()
-        .map(|a| ("Animator", serde_json::to_value((*a).clone()).unwrap()))
-}
-
 /// `JointPalette` is computed by `animation_step` every tick, never
 /// hand-authored — but it's registered with a real loader (not a rejecting
 /// stub) rather than inventing a "dump-only" registry mechanism, since a
 /// scene-authored initial value is harmless and gets overwritten the very
 /// next tick an `Animator` is present, the same relationship `Transform`
 /// already has with `physics_step`.
-fn load_joint_palette(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<JointPalette>(v)?);
-    Ok(())
+impl Named for Animator {
+    const NAME: &'static str = "Animator";
 }
-
-fn dump_joint_palette(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&JointPalette>()
-        .map(|p| ("JointPalette", serde_json::to_value((*p).clone()).unwrap()))
+impl Named for JointPalette {
+    const NAME: &'static str = "JointPalette";
 }
-
-fn load_audio_source(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<AudioSource>(v)?);
-    Ok(())
+impl Named for AudioSource {
+    const NAME: &'static str = "AudioSource";
 }
-
-fn dump_audio_source(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&AudioSource>()
-        .map(|a| ("AudioSource", serde_json::to_value((*a).clone()).unwrap()))
-}
-
 /// `SoundsPlayed` is computed by `audio_step` every tick, never
 /// hand-authored — registered with a real loader anyway, same "harmless
 /// scene-authored initial value, overwritten next tick" posture
 /// `JointPalette` established (ADR-0015).
-fn load_sounds_played(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<SoundsPlayed>(v)?);
-    Ok(())
-}
-
-fn dump_sounds_played(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&SoundsPlayed>()
-        .map(|s| ("SoundsPlayed", serde_json::to_value((*s).clone()).unwrap()))
+impl Named for SoundsPlayed {
+    const NAME: &'static str = "SoundsPlayed";
 }
 
 pub fn components() -> ComponentRegistry {
     let mut registry = ComponentRegistry::new();
-    registry.register("Position", load_position, dump_position);
-    registry.register("Velocity", load_velocity, dump_velocity);
-    registry.register("Transform", load_transform, dump_transform);
-    registry.register("Camera", load_camera, dump_camera);
-    registry.register("MeshRef", load_mesh_ref, dump_mesh_ref);
-    registry.register("Material", load_material, dump_material);
-    registry.register("Text", load_text, dump_text);
-    registry.register("Script", load_script, dump_script);
-    registry.register("RigidBody", load_rigid_body, dump_rigid_body);
-    registry.register("Collider", load_collider, dump_collider);
-    registry.register("DespawnAfter", load_despawn_after, dump_despawn_after);
-    registry.register("Fuse", load_fuse, dump_fuse);
-    registry.register("Animator", load_animator, dump_animator);
-    registry.register("JointPalette", load_joint_palette, dump_joint_palette);
-    registry.register("AudioSource", load_audio_source, dump_audio_source);
-    registry.register("SoundsPlayed", load_sounds_played, dump_sounds_played);
+    registry.register("Position", load::<Position>, dump::<Position>);
+    registry.register("Velocity", load::<Velocity>, dump::<Velocity>);
+    registry.register("Transform", load::<Transform>, dump::<Transform>);
+    registry.register("Camera", load::<Camera>, dump::<Camera>);
+    registry.register("MeshRef", load::<MeshRef>, dump::<MeshRef>);
+    registry.register("Material", load::<Material>, dump::<Material>);
+    registry.register("Text", load::<Text>, dump::<Text>);
+    registry.register("Script", load::<Script>, dump::<Script>);
+    registry.register("RigidBody", load::<RigidBody>, dump::<RigidBody>);
+    registry.register("Collider", load::<Collider>, dump::<Collider>);
+    registry.register("DespawnAfter", load::<DespawnAfter>, dump::<DespawnAfter>);
+    registry.register("Fuse", load::<Fuse>, dump::<Fuse>);
+    registry.register("Animator", load::<Animator>, dump::<Animator>);
+    registry.register("JointPalette", load::<JointPalette>, dump::<JointPalette>);
+    registry.register("AudioSource", load::<AudioSource>, dump::<AudioSource>);
+    registry.register("SoundsPlayed", load::<SoundsPlayed>, dump::<SoundsPlayed>);
     registry
 }
 

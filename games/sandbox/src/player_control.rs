@@ -21,6 +21,10 @@ fn default_force() -> f32 {
     12.0
 }
 
+impl engine_cli::registry::Named for PlayerControl {
+    const NAME: &'static str = "PlayerControl";
+}
+
 /// Reads `Input` from `Resources`, computes a WASD direction, and applies a
 /// force to every `PlayerControl`-tagged entity's rigid body. Must be
 /// registered *before* "physics" in scene order — `PhysicsState::apply_force`

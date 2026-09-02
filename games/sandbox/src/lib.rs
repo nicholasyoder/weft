@@ -8,42 +8,6 @@ use camera_follow::CameraFollow;
 use hud::Pickup;
 use player_control::PlayerControl;
 
-fn load_player_control(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<PlayerControl>(v)?);
-    Ok(())
-}
-
-fn dump_player_control(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&PlayerControl>()
-        .map(|p| ("PlayerControl", serde_json::to_value(*p).unwrap()))
-}
-
-fn load_camera_follow(
-    v: serde_json::Value,
-    b: &mut hecs::EntityBuilder,
-) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<CameraFollow>(v)?);
-    Ok(())
-}
-
-fn dump_camera_follow(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&CameraFollow>()
-        .map(|c| ("CameraFollow", serde_json::to_value(*c).unwrap()))
-}
-
-fn load_pickup(v: serde_json::Value, b: &mut hecs::EntityBuilder) -> Result<(), serde_json::Error> {
-    b.add(serde_json::from_value::<Pickup>(v)?);
-    Ok(())
-}
-
-fn dump_pickup(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&Pickup>()
-        .map(|p| ("Pickup", serde_json::to_value(*p).unwrap()))
-}
-
 /// The sandbox's own extended registry: engine-cli's base components/systems
 /// plus `PlayerControl`/`CameraFollow`. Exposed separately from `play` so
 /// tests can build a `Sim`/dispatch scripts against the exact same
@@ -52,10 +16,16 @@ pub fn registry() -> (
     engine_scene::ComponentRegistry,
     engine_scene::SystemRegistry,
 ) {
+    use engine_cli::registry::{dump, load};
+
     let mut components = engine_cli::registry::components();
-    components.register("PlayerControl", load_player_control, dump_player_control);
-    components.register("CameraFollow", load_camera_follow, dump_camera_follow);
-    components.register("Pickup", load_pickup, dump_pickup);
+    components.register(
+        "PlayerControl",
+        load::<PlayerControl>,
+        dump::<PlayerControl>,
+    );
+    components.register("CameraFollow", load::<CameraFollow>, dump::<CameraFollow>);
+    components.register("Pickup", load::<Pickup>, dump::<Pickup>);
 
     let mut systems = engine_cli::registry::systems();
     systems.register("player_control", player_control::player_control_system);

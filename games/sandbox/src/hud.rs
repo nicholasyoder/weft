@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Pickup {}
 
+impl engine_cli::registry::Named for Pickup {
+    const NAME: &'static str = "Pickup";
+}
+
 /// Total pickups `playground.toml` starts with — the counter's denominator.
 /// A fixed constant (rather than derived from the scene) is fine for this
 /// one hand-authored scene; deriving it would be the natural next step if a

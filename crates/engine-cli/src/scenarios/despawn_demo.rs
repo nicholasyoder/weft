@@ -16,7 +16,7 @@ use engine_physics::{physics_step, BodyType, Collider, ColliderShape, RigidBody}
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::registry::{dump_collider, dump_rigid_body, dump_transform};
+use crate::registry::dump;
 
 /// Ticks remaining before the entity carrying this despawns. Decremented
 /// once per tick by `despawn_after_system`; the entity is despawned the
@@ -47,9 +47,8 @@ pub(crate) fn despawn_after_system(args: &mut SystemArgs) -> Result<(), SystemEr
     Ok(())
 }
 
-pub(crate) fn dump_despawn_after(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {
-    e.get::<&DespawnAfter>()
-        .map(|d| ("DespawnAfter", serde_json::to_value(*d).unwrap()))
+impl crate::registry::Named for DespawnAfter {
+    const NAME: &'static str = "DespawnAfter";
 }
 
 pub fn build(seed: u64) -> Sim {
@@ -97,8 +96,8 @@ pub fn build(seed: u64) -> Sim {
 }
 
 pub const DUMPERS: &[ComponentDumper] = &[
-    dump_transform,
-    dump_rigid_body,
-    dump_collider,
-    dump_despawn_after,
+    dump::<Transform>,
+    dump::<RigidBody>,
+    dump::<Collider>,
+    dump::<DespawnAfter>,
 ];

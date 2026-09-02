@@ -11,7 +11,7 @@ use engine_core::Transform;
 use engine_physics::{physics_step, BodyType, Collider, ColliderShape, RigidBody};
 use glam::Vec3;
 
-use crate::registry::{dump_collider, dump_rigid_body, dump_transform};
+use crate::registry::dump;
 
 pub fn build(seed: u64) -> Sim {
     let mut sim = Sim::new(seed, 1.0 / 60.0);
@@ -47,4 +47,4 @@ pub fn build(seed: u64) -> Sim {
     sim
 }
 
-pub const DUMPERS: &[ComponentDumper] = &[dump_transform, dump_rigid_body, dump_collider];
+pub const DUMPERS: &[ComponentDumper] = &[dump::<Transform>, dump::<RigidBody>, dump::<Collider>];
