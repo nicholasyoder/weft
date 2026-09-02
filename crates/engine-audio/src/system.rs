@@ -4,10 +4,10 @@ use std::io::Cursor;
 use engine_assets::{AssetError, AssetStore};
 use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::{AssetsDir, AudioSettings, SoundEventQueue};
-use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
+use kira::sound::static_sound::StaticSoundData;
 use kira::Tween;
 
-use crate::backend::AudioBackend;
+use crate::backend::{AudioBackend, VoiceHandle};
 use crate::components::{AudioSource, SoundsPlayed};
 use crate::error::AudioError;
 
@@ -35,10 +35,10 @@ fn audio_error_to_system_error(e: AudioError) -> SystemError {
 #[derive(Default)]
 struct AudioCache {
     clips: HashMap<String, StaticSoundData>,
-    /// `None` once started with no live handle to stop later (batch
-    /// commands with no backend, or the offline `Mixdown`, which has no
-    /// per-voice handle concept at all); `Some` only for the live backend.
-    started: HashMap<hecs::Entity, Option<StaticSoundHandle>>,
+    /// `None` once started with no handle to stop later (batch commands
+    /// with no backend at all); `Some` for either real backend, since both
+    /// now have a stoppable voice concept (see `VoiceHandle`).
+    started: HashMap<hecs::Entity, Option<VoiceHandle>>,
 }
 
 impl AudioCache {
@@ -73,14 +73,17 @@ impl AudioCache {
         self.started.contains_key(&entity)
     }
 
-    fn mark_started(&mut self, entity: hecs::Entity, handle: Option<StaticSoundHandle>) {
+    fn mark_started(&mut self, entity: hecs::Entity, handle: Option<VoiceHandle>) {
         self.started.insert(entity, handle);
     }
 
-    /// Mirrors `engine-physics`'s `evict_despawned`/ADR-0011 exactly:
-    /// stops and forgets any tracked entity no longer present in `world`,
-    /// in `Entity::to_bits()` order.
-    fn evict_despawned(&mut self, world: &hecs::World) {
+    /// Mirrors `engine-physics`'s `evict_despawned`/ADR-0011: stops and
+    /// forgets any tracked entity no longer present in `world`, in
+    /// `Entity::to_bits()` order. Unlike the physics version, this also
+    /// needs `backend` — a `VoiceHandle::Mix` id only means something
+    /// through the live `Mixdown` it was issued from (the live backend's
+    /// `StaticSoundHandle` is self-contained and needs no such lookup).
+    fn evict_despawned(&mut self, world: &hecs::World, backend: Option<&mut AudioBackend>) {
         let mut stale: Vec<hecs::Entity> = self
             .started
             .keys()
@@ -88,9 +91,21 @@ impl AudioCache {
             .filter(|e| !world.contains(*e))
             .collect();
         stale.sort_by_key(|e| e.to_bits());
+
+        let mut mixdown = match backend {
+            Some(AudioBackend::Mix(mixdown)) => Some(mixdown),
+            _ => None,
+        };
         for entity in stale {
-            if let Some(Some(mut handle)) = self.started.remove(&entity) {
-                handle.stop(Tween::default());
+            if let Some(Some(voice)) = self.started.remove(&entity) {
+                match voice {
+                    VoiceHandle::Live(mut handle) => handle.stop(Tween::default()),
+                    VoiceHandle::Mix(id) => {
+                        if let Some(mixdown) = mixdown.as_deref_mut() {
+                            mixdown.stop_voice(id);
+                        }
+                    }
+                }
             }
         }
     }
@@ -145,7 +160,9 @@ pub fn audio_step(args: &mut SystemArgs) -> Result<(), SystemError> {
     let store = AssetStore::new(assets_dir);
     let state = args.resources.get_or_insert_with(AudioState::default);
 
-    state.cache.evict_despawned(args.world);
+    state
+        .cache
+        .evict_despawned(args.world, state.backend.as_mut());
 
     for event in &events {
         state.cache.ensure_clip(&store, &event.clip)?;

@@ -6,6 +6,7 @@ use kira::Frame;
 use crate::error::AudioError;
 
 struct Voice {
+    id: u64,
     frames: Arc<[Frame]>,
     clip_rate: u32,
     /// Fractional position in *source* (clip-rate) frame units — advanced
@@ -27,15 +28,17 @@ struct Voice {
 /// holds to.
 ///
 /// Unlike `LiveAudioBackend` (a thin wrapper over kira's own real-time
-/// mixer), this doesn't hand back a per-voice handle — a one-shot or
-/// looping voice, once started, just runs until it either finishes (one-
-/// shot) or the mixdown ends (loop). `audio_step`'s despawn-eviction only
-/// removes the live backend's tracked handles for this reason.
+/// mixer), a voice here is identified by a plain `u64` id (`play`'s return
+/// value) rather than a real device handle — but it's stoppable the same
+/// way: a one-shot or looping voice, once started, keeps running until it
+/// either finishes (one-shot), the mixdown ends (loop), or `stop_voice` is
+/// called on it (e.g. by `audio_step`'s despawn-eviction).
 #[derive(Default)]
 pub struct Mixdown {
     sample_rate: u32,
     samples: Vec<Frame>,
     voices: Vec<Voice>,
+    next_voice_id: u64,
 }
 
 impl Mixdown {
@@ -44,17 +47,41 @@ impl Mixdown {
             sample_rate,
             samples: Vec::new(),
             voices: Vec::new(),
+            next_voice_id: 0,
         }
     }
 
-    pub fn play(&mut self, frames: Arc<[Frame]>, clip_rate: u32, volume: f32, looping: bool) {
+    /// Starts a voice and returns an id `stop_voice` can later use to end
+    /// it early — the offline equivalent of the live backend's
+    /// `StaticSoundHandle`, needed so despawn-eviction (`audio_step`'s
+    /// `AudioCache::evict_despawned`) can stop a looping voice here too,
+    /// not just on the live backend.
+    pub fn play(
+        &mut self,
+        frames: Arc<[Frame]>,
+        clip_rate: u32,
+        volume: f32,
+        looping: bool,
+    ) -> u64 {
+        let id = self.next_voice_id;
+        self.next_voice_id += 1;
         self.voices.push(Voice {
+            id,
             frames,
             clip_rate,
             pos: 0.0,
             volume,
             looping,
         });
+        id
+    }
+
+    /// Ends a voice immediately (no fade — unlike the live backend's
+    /// `Tween::default()` stop, `Mixdown` has no fade concept; this is a
+    /// deliberate difference, not a bug). A no-op if `id` already finished
+    /// (a one-shot that ran out) or was never valid.
+    pub fn stop_voice(&mut self, id: u64) {
+        self.voices.retain(|voice| voice.id != id);
     }
 
     /// Renders `dt` seconds of audio, appending to the internal buffer and
@@ -185,6 +212,33 @@ mod tests {
         for s in mix.samples() {
             assert!((s.left - 0.3).abs() < 1e-6, "{s:?}");
         }
+    }
+
+    #[test]
+    fn stop_voice_silences_it_immediately_but_leaves_other_voices_playing() {
+        let mut mix = Mixdown::new(1000);
+        let stopped = mix.play(constant_clip(0.3, 3), 1000, 1.0, true);
+        mix.play(constant_clip(0.6, 3), 1000, 1.0, true);
+        mix.render(0.002); // 2 samples with both voices active
+        mix.stop_voice(stopped);
+        mix.render(0.002); // 2 more samples with only the second voice active
+        let samples = mix.samples();
+        assert_eq!(samples.len(), 4);
+        for s in &samples[0..2] {
+            assert!((s.left - 0.9).abs() < 1e-6, "{s:?}");
+        }
+        for s in &samples[2..4] {
+            assert!((s.left - 0.6).abs() < 1e-6, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn stop_voice_on_an_already_finished_one_shot_is_a_no_op() {
+        let mut mix = Mixdown::new(1000);
+        let id = mix.play(constant_clip(0.5, 2), 1000, 1.0, false);
+        mix.render(0.002); // exhausts the 2-sample one-shot
+        mix.stop_voice(id); // must not panic on a since-removed voice
+        assert_eq!(mix.samples().len(), 2);
     }
 
     #[test]

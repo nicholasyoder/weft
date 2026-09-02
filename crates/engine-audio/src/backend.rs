@@ -83,29 +83,37 @@ impl AudioBackend {
         }
     }
 
-    /// Starts a (typically looping) `AudioSource`. Returns a live handle
-    /// for later `stop()`-on-despawn when this is the live backend — the
-    /// offline `Mixdown` has no per-voice handle concept, so it returns
-    /// `None` unconditionally and just runs the voice for the rest of the
-    /// mixdown.
+    /// Starts a (typically looping) `AudioSource`. Returns a handle for later
+    /// stopping-on-despawn — a live `StaticSoundHandle` for the live
+    /// backend, or a `Mixdown` voice id for the offline one (see
+    /// `VoiceHandle`); `None` only if the underlying start itself failed
+    /// (live backend only — `Mixdown::play` cannot fail).
     pub(crate) fn play_source(
         &mut self,
         clip: &StaticSoundData,
         volume: f32,
         looping: bool,
-    ) -> Option<StaticSoundHandle> {
+    ) -> Option<VoiceHandle> {
         match self {
             AudioBackend::Live(live) => {
                 let mut sound = clip.clone().volume(linear_to_decibels(volume));
                 if looping {
                     sound = sound.loop_region(..);
                 }
-                live.music_track.play(sound).ok()
+                live.music_track.play(sound).ok().map(VoiceHandle::Live)
             }
             AudioBackend::Mix(mixdown) => {
-                mixdown.play(clip.frames.clone(), clip.sample_rate, volume, looping);
-                None
+                let id = mixdown.play(clip.frames.clone(), clip.sample_rate, volume, looping);
+                Some(VoiceHandle::Mix(id))
             }
         }
     }
+}
+
+/// A handle to a started `AudioSource` voice, for later stopping on
+/// despawn — `AudioCache::evict_despawned` matches on this to stop the
+/// right backend's voice without needing to know which backend is active.
+pub(crate) enum VoiceHandle {
+    Live(StaticSoundHandle),
+    Mix(u64),
 }

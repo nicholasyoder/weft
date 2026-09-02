@@ -84,6 +84,46 @@ fn mix_produces_only_silence_for_a_scene_with_no_audio_components() {
     std::fs::remove_file(&out).ok();
 }
 
+/// Regression test for the `mix`/`play` divergence known-issues.md
+/// documented: the offline `Mixdown` backend used to have no way to stop a
+/// voice on despawn, so a looping `AudioSource` kept rendering in `mix`
+/// after its entity despawned even though the live backend correctly
+/// stopped it in `play`.
+#[test]
+fn mix_stops_a_looping_voice_at_the_same_tick_the_entity_despawns() {
+    let out = scratch_wav();
+    run_mix("tests/fixtures/scenes/mix_despawn.toml", &out, "10", "8000");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let data = &bytes[44..]; // skip the canonical WAV header
+    let frame_at = |i: usize| -> (i16, i16) {
+        let off = i * 4;
+        (
+            i16::from_le_bytes([data[off], data[off + 1]]),
+            i16::from_le_bytes([data[off + 2], data[off + 3]]),
+        )
+    };
+    let total_frames = data.len() / 4;
+    assert!(
+        total_frames > 700,
+        "expected more than 700 frames from a 10-tick/8000Hz mix, got {total_frames}"
+    );
+
+    // The fixture's entity despawns after 5 ticks (~frame 533 at
+    // 8000Hz/60Hz); a comfortable margin on both sides of that boundary
+    // avoids relying on the exact per-tick frame count.
+    assert!(
+        (0..500).any(|i| frame_at(i) != (0, 0)),
+        "voice should be audible before the entity despawns"
+    );
+    assert!(
+        (700..total_frames).all(|i| frame_at(i) == (0, 0)),
+        "voice must be silent after the entity despawns — mix and play should agree"
+    );
+
+    std::fs::remove_file(&out).ok();
+}
+
 #[test]
 fn cli_mix_subcommand_reports_structured_json_status() {
     let out = scratch_wav();
