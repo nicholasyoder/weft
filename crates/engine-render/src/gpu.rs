@@ -1155,7 +1155,7 @@ fn load_skinned_mesh_buffers(
     let mesh_data = engine_assets::mesh::decode(&mesh_bytes)?;
     let skin_bytes = store.get(skin_hash)?;
     let skin_data = engine_assets::skin::decode(&skin_bytes)?;
-    let skinned_mesh = mesh::from_skinned_asset(&mesh_data, &skin_data);
+    let skinned_mesh = mesh::from_skinned_asset(&mesh_data, &skin_data)?;
     Ok(upload_skinned_mesh(device, &skinned_mesh))
 }
 

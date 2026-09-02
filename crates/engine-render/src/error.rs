@@ -24,6 +24,10 @@ pub enum RenderError {
     AssetLoadFailed(#[from] engine_assets::AssetError),
     #[error("failed to parse font: {0}")]
     FontParseFailed(String),
+    #[error(
+        "mesh/skin vertex count mismatch: mesh has {mesh} vertices, skin has {skin} — they must come from the same glTF primitive import"
+    )]
+    SkinVertexCountMismatch { mesh: usize, skin: usize },
 }
 
 impl RenderError {
@@ -39,6 +43,7 @@ impl RenderError {
             Self::EncodeFailed { .. } => "RENDER_ENCODE_ERROR",
             Self::AssetLoadFailed(_) => "RENDER_ASSET_ERROR",
             Self::FontParseFailed(_) => "RENDER_FONT_PARSE_ERROR",
+            Self::SkinVertexCountMismatch { .. } => "RENDER_SKIN_VERTEX_MISMATCH",
         }
     }
 }

@@ -1,5 +1,7 @@
 use glam::Vec3;
 
+use crate::error::RenderError;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -132,19 +134,23 @@ pub struct SkinnedMeshData {
 /// Joins an imported mesh's plain geometry with its separately-stored
 /// skinning data (vertex-index-aligned to `data.positions`, same
 /// convention `normals`/`uvs` already use — see ADR-0015) into the
-/// interleaved GPU-ready form the skinned render pipeline uses. Panics if
-/// the two don't have the same vertex count, which would mean a mesh/skin
-/// pair that didn't actually come from the same glTF primitive import —
-/// not a reachable state through `engine import`'s own path.
+/// interleaved GPU-ready form the skinned render pipeline uses. Returns
+/// `RenderError::SkinVertexCountMismatch` if the two don't have the same
+/// vertex count, which would mean a mesh/skin pair that didn't actually
+/// come from the same glTF primitive import — not a reachable state
+/// through `engine import`'s own path, but a corrupt/hand-edited asset
+/// store shouldn't be able to crash the process over it, matching every
+/// other decode path in this crate.
 pub fn from_skinned_asset(
     data: &engine_assets::mesh::MeshData,
     skin: &engine_assets::skin::SkinData,
-) -> SkinnedMeshData {
-    assert_eq!(
-        data.positions.len(),
-        skin.joints.len(),
-        "mesh and skin must have the same vertex count"
-    );
+) -> Result<SkinnedMeshData, RenderError> {
+    if data.positions.len() != skin.joints.len() {
+        return Err(RenderError::SkinVertexCountMismatch {
+            mesh: data.positions.len(),
+            skin: skin.joints.len(),
+        });
+    }
     let vertices = (0..data.positions.len())
         .map(|i| SkinnedVertex {
             position: data.positions[i],
@@ -154,10 +160,10 @@ pub fn from_skinned_asset(
             weights: skin.weights[i],
         })
         .collect();
-    SkinnedMeshData {
+    Ok(SkinnedMeshData {
         vertices,
         indices: data.indices.clone(),
-    }
+    })
 }
 
 /// Converts an imported `engine-assets` mesh (plain position/normal/uv data)
@@ -190,4 +196,33 @@ pub fn plane() -> MeshData {
         2.0,
     );
     MeshData { vertices, indices }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for known-issues.md: a mesh/skin pair that doesn't
+    /// come from the same glTF primitive import (here, deliberately
+    /// mismatched vertex counts) must return a structured `RenderError`,
+    /// not panic via `assert_eq!`.
+    #[test]
+    fn mismatched_vertex_counts_return_an_error_instead_of_panicking() {
+        let mesh = engine_assets::mesh::MeshData {
+            positions: vec![[0.0, 0.0, 0.0]; 3],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            uvs: vec![[0.0, 0.0]; 3],
+            indices: vec![0, 1, 2],
+        };
+        let skin = engine_assets::skin::SkinData {
+            joints: vec![[0, 0, 0, 0]; 2],
+            weights: vec![[1.0, 0.0, 0.0, 0.0]; 2],
+        };
+
+        let result = from_skinned_asset(&mesh, &skin);
+        assert!(matches!(
+            result,
+            Err(RenderError::SkinVertexCountMismatch { mesh: 3, skin: 2 })
+        ));
+    }
 }
