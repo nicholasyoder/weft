@@ -32,7 +32,7 @@ fn camera_tracks_the_player_with_a_fixed_offset() {
         },
     ));
 
-    sim.step();
+    sim.step().unwrap();
 
     let player_position = sim.world.get::<&Transform>(player).unwrap().position;
     let camera_transform = sim.world.get::<&Transform>(camera).unwrap();
@@ -69,11 +69,11 @@ fn camera_moves_when_the_player_moves() {
         },
     ));
 
-    sim.step();
+    sim.step().unwrap();
     let camera_position_before = sim.world.get::<&Transform>(camera).unwrap().position;
 
     sim.world.get::<&mut Transform>(player).unwrap().position = Vec3::new(5.0, 0.5, 0.0);
-    sim.step();
+    sim.step().unwrap();
     let camera_position_after = sim.world.get::<&Transform>(camera).unwrap().position;
 
     assert_ne!(camera_position_before, camera_position_after);
@@ -103,7 +103,7 @@ fn no_player_control_entity_leaves_the_camera_untouched() {
         },
     ));
 
-    sim.step();
+    sim.step().unwrap();
 
     assert_eq!(
         sim.world.get::<&Transform>(camera).unwrap().position,

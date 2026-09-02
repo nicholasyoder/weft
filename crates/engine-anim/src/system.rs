@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use engine_assets::animation::AnimationClip;
 use engine_assets::skeleton::Skeleton;
-use engine_assets::{animation, skeleton, AssetStore};
-use engine_core::scheduler::SystemArgs;
+use engine_assets::{animation, skeleton, AssetError, AssetStore};
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::{AssetsDir, JointPalette};
 
 use crate::components::Animator;
@@ -20,39 +20,39 @@ pub struct AnimCache {
     clips: HashMap<String, AnimationClip>,
 }
 
+/// Converts an `AssetError` (unresolvable hash, corrupt asset bytes) into
+/// the `SystemError` `animation_step` returns — can't be a `From` impl
+/// (`SystemError` and `AssetError` are both foreign to this crate, so the
+/// orphan rules block it), so it's a plain function instead.
+fn to_system_error(e: AssetError) -> SystemError {
+    SystemError::new(e.code(), e.to_string())
+}
+
 impl AnimCache {
-    /// Decodes and caches the skeleton at `hash` if not already cached. An
-    /// unresolvable or corrupt hash panics with a clear message — this is
-    /// scene-authored data reaching a system with no `Result`-returning
-    /// path (`System = fn(&mut SystemArgs)`), so a loud failure here is the
-    /// closest available equivalent to this codebase's usual structured
-    /// `{code, message}` errors, not a deliberately silent no-op. Compare
-    /// to a missing `AssetsDir` (see `animation_step`), which *is* a
-    /// legitimate silent no-op — "no asset store configured at all" is a
+    /// Decodes and caches the skeleton at `hash` if not already cached.
+    /// Compare to a missing `AssetsDir` (see `animation_step`), which *is*
+    /// a legitimate silent no-op — "no asset store configured at all" is a
     /// valid engine-wide state; "this specific hash doesn't resolve" is a
-    /// content bug.
-    fn ensure_skeleton(&mut self, store: &AssetStore, hash: &str) {
+    /// content bug, reported as a structured `SystemError` rather than
+    /// silently ignored or panicking the process.
+    fn ensure_skeleton(&mut self, store: &AssetStore, hash: &str) -> Result<(), SystemError> {
         if self.skeletons.contains_key(hash) {
-            return;
+            return Ok(());
         }
-        let bytes = store
-            .get(hash)
-            .unwrap_or_else(|e| panic!("Animator references unknown skeleton '{hash}': {e}"));
-        let decoded = skeleton::decode(&bytes)
-            .unwrap_or_else(|e| panic!("failed to decode skeleton asset '{hash}': {e}"));
+        let bytes = store.get(hash).map_err(to_system_error)?;
+        let decoded = skeleton::decode(&bytes).map_err(to_system_error)?;
         self.skeletons.insert(hash.to_string(), decoded);
+        Ok(())
     }
 
-    fn ensure_clip(&mut self, store: &AssetStore, hash: &str) {
+    fn ensure_clip(&mut self, store: &AssetStore, hash: &str) -> Result<(), SystemError> {
         if self.clips.contains_key(hash) {
-            return;
+            return Ok(());
         }
-        let bytes = store
-            .get(hash)
-            .unwrap_or_else(|e| panic!("Animator references unknown clip '{hash}': {e}"));
-        let decoded = animation::decode(&bytes)
-            .unwrap_or_else(|e| panic!("failed to decode animation clip '{hash}': {e}"));
+        let bytes = store.get(hash).map_err(to_system_error)?;
+        let decoded = animation::decode(&bytes).map_err(to_system_error)?;
         self.clips.insert(hash.to_string(), decoded);
+        Ok(())
     }
 
     fn skeleton(&self, hash: &str) -> &Skeleton {
@@ -74,14 +74,16 @@ impl AnimCache {
 /// `JointPalette`. Registered into `SystemRegistry` as `"animation"`,
 /// mirroring `engine-physics`'s `physics_step` precedent (ADR-0008).
 ///
-/// A silent no-op (not a panic) if no `AssetsDir` resource is present —
+/// A silent no-op (not an error) if no `AssetsDir` resource is present —
 /// e.g. `engine test`/`inspect`/`run` invoked with no asset store
-/// configured at all. See `AnimCache`'s doc comment for why an
-/// *unresolvable hash*, once an `AssetsDir` does exist, is instead a loud
-/// panic rather than a second silent case.
-pub fn animation_step(args: &mut SystemArgs) {
+/// configured at all. Once an `AssetsDir` does exist, an unresolvable or
+/// corrupt hash is instead a structured `SystemError` (see
+/// `AnimCache::ensure_skeleton`/`ensure_clip`) — "no asset store at all" is
+/// a legitimate engine-wide state, "this specific hash doesn't resolve" is
+/// a content bug the caller should see, not a second silent case.
+pub fn animation_step(args: &mut SystemArgs) -> Result<(), SystemError> {
     let Some(assets_dir) = args.resources.get::<AssetsDir>() else {
-        return;
+        return Ok(());
     };
     let store = AssetStore::new(assets_dir.0.clone());
     let cache = args.resources.get_or_insert_with(AnimCache::default);
@@ -99,7 +101,7 @@ pub fn animation_step(args: &mut SystemArgs) {
                 "entity came from a query over &Animator taken moments ago on this same world",
             );
 
-            cache.ensure_clip(&store, &animator.clip);
+            cache.ensure_clip(&store, &animator.clip)?;
             let duration = cache.clip(&animator.clip).duration.max(f32::EPSILON);
 
             if animator.playing {
@@ -111,7 +113,7 @@ pub fn animation_step(args: &mut SystemArgs) {
                 animator.time.clamp(0.0, duration)
             };
 
-            cache.ensure_skeleton(&store, &animator.skeleton);
+            cache.ensure_skeleton(&store, &animator.skeleton)?;
             let skeleton = cache.skeleton(&animator.skeleton);
             let clip = cache.clip(&animator.clip);
             sampling::sample(skeleton, clip, animator.time)
@@ -122,4 +124,5 @@ pub fn animation_step(args: &mut SystemArgs) {
         };
         let _ = args.world.insert_one(entity, palette);
     }
+    Ok(())
 }

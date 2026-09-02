@@ -62,6 +62,25 @@ fn importing_a_gltf_twice_produces_the_same_mesh_hash() {
 }
 
 #[test]
+fn importing_a_skinned_gltf_twice_produces_the_same_clip_hash() {
+    // Regression test for the 2026-09-02 finding that `AnimationClip.tracks`
+    // was collected from a `HashMap` with no sort before hashing, making the
+    // content hash nondeterministic across runs — see
+    // docs/roadmap/known-issues.md. The fixture only has one animated joint
+    // today, so this alone wouldn't reliably have caught the bug (see
+    // `gltf_import`'s own `tracks_sorted_by_joint` unit test for a direct,
+    // multi-joint-order-independent check of the actual invariant); kept
+    // here too since it's the same "import is idempotent" contract every
+    // other asset type in this file already asserts for its own hash.
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let first = import_gltf(&fixture("skinned.gltf"), &store).unwrap();
+    let second = import_gltf(&fixture("skinned.gltf"), &store).unwrap();
+    assert_eq!(first.clip_hash, second.clip_hash);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn importing_a_textured_gltf_produces_a_texture_hash_and_stores_a_png() {
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);

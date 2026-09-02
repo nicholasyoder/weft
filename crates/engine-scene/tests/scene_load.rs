@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use engine_core::inspect::world_to_json;
-use engine_core::scheduler::SystemArgs;
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_scene::{ComponentRegistry, SystemRegistry};
 use serde::{Deserialize, Serialize};
 
@@ -25,10 +25,11 @@ fn dump_position(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value
         .map(|p| ("Position", serde_json::to_value(&*p).unwrap()))
 }
 
-fn nudge(args: &mut SystemArgs) {
+fn nudge(args: &mut SystemArgs) -> Result<(), SystemError> {
     for (_e, pos) in args.world.query::<&mut Position>().iter() {
         pos.x += 1.0;
     }
+    Ok(())
 }
 
 fn registries() -> (ComponentRegistry, SystemRegistry) {
@@ -73,7 +74,7 @@ fn loads_entities_in_file_order_and_runs_systems() {
     );
     let (components, systems) = registries();
     let (mut sim, dumpers) = engine_scene::load(&path, 1, &components, &systems).unwrap();
-    sim.run(1);
+    sim.run(1).unwrap();
 
     let json = world_to_json(&sim.world, sim.tick, 1, &dumpers);
     let entities = json["entities"].as_array().unwrap();

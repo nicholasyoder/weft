@@ -78,7 +78,7 @@ fn hud_text_reflects_collected_pickups() {
 
     // One system step with nothing collected yet: the counter should read
     // its starting value.
-    sim.step();
+    sim.step().unwrap();
     assert_eq!(hud_text(&sim.world), "Pickups: 0/3");
 
     // Move the player onto pickup_1 (scene position [4.0, 0.4, 4.0]) and
@@ -107,6 +107,6 @@ fn hud_text_reflects_collected_pickups() {
 
     // hud_system runs as part of the scene's [[system]] list — one more
     // step should pick up the despawn that just happened.
-    sim.step();
+    sim.step().unwrap();
     assert_eq!(hud_text(&sim.world), "Pickups: 1/3");
 }

@@ -147,7 +147,8 @@ pub(crate) fn step_and_dispatch_with_input(
     components: &ComponentRegistry,
     input: &Input,
 ) -> Result<(), CliError> {
-    sim.step();
+    sim.step()
+        .map_err(|(name, e)| CliError::from_system_error(&name, sim.tick, &e))?;
     if let Some(host) = host {
         let errors = host.dispatch(DispatchCtx {
             world: &mut sim.world,
@@ -293,7 +294,8 @@ pub fn render_scene(
 ) -> Result<(), CliError> {
     let mut sim =
         build_sim_with_assets_dir(SimSource::Scene(scene.to_path_buf()), seed, assets_dir)?;
-    sim.run(ticks);
+    sim.run(ticks)
+        .map_err(|(name, e)| CliError::from_system_error(&name, sim.tick, &e))?;
     engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to)
         .map_err(|e| CliError::from_render_error(&e))
 }

@@ -4,7 +4,7 @@
 //! anything camera-specific (its `target` field already covers look-at;
 //! this is purely "where the camera entity's own `Transform` should be").
 
-use engine_core::scheduler::SystemArgs;
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::Transform;
 use engine_render::Camera;
 use glam::Vec3;
@@ -34,7 +34,7 @@ fn default_offset() -> Vec3 {
 /// Must run *after* "physics" in scene order so it reads the target's
 /// post-physics position for this tick, not last tick's (avoiding a
 /// one-tick lag between the ball moving and the camera catching up).
-pub fn camera_follow_system(args: &mut SystemArgs) {
+pub fn camera_follow_system(args: &mut SystemArgs) -> Result<(), SystemError> {
     let mut targets: Vec<_> = args
         .world
         .query::<(&PlayerControl, &Transform)>()
@@ -43,7 +43,7 @@ pub fn camera_follow_system(args: &mut SystemArgs) {
         .collect();
     targets.sort_by_key(|(entity, _)| entity.to_bits());
     let Some((_, target_position)) = targets.into_iter().next() else {
-        return;
+        return Ok(());
     };
 
     for (_, (follow, transform, camera)) in args
@@ -54,4 +54,5 @@ pub fn camera_follow_system(args: &mut SystemArgs) {
         transform.position = target_position + follow.offset;
         camera.target = target_position + follow.look_offset;
     }
+    Ok(())
 }

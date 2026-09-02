@@ -524,3 +524,89 @@ fn engine_key_held_rejects_an_unrecognized_key_name() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Confirms the sandbox actually sandboxes: `io`/`os`/`package`/`require`
+/// must not be reachable from a script's environment. Regression test for
+/// the 2026-09-02 finding that `StdLib::ALL_SAFE` (the previous setting)
+/// actually includes `IO`/`OS`/`PACKAGE` — see the corrected ADR-0006.
+#[test]
+fn io_os_and_package_are_not_reachable_from_scripts() {
+    let dir = std::env::temp_dir().join(format!(
+        "engine-script-test-sandbox-escape-{}",
+        std::process::id()
+    ));
+    for (name, src) in [
+        (
+            "tries_io.lua",
+            "function on_tick(components, tick, dt)\n  io.open(\"/tmp/should-not-exist\", \"w\")\n  return nil\nend\n",
+        ),
+        (
+            "tries_os.lua",
+            "function on_tick(components, tick, dt)\n  os.execute(\"true\")\n  return nil\nend\n",
+        ),
+        (
+            "tries_require.lua",
+            "function on_tick(components, tick, dt)\n  require(\"anything\")\n  return nil\nend\n",
+        ),
+    ] {
+        let path = write_script(&dir, name, src);
+        let mut world = hecs::World::new();
+        world.spawn((
+            Counter { value: 0 },
+            Script {
+                path: path.display().to_string(),
+                function: "on_tick".to_string(),
+            },
+        ));
+
+        let registry = registry();
+        let mut host = ScriptHost::new().unwrap();
+        host.load_file(&path).unwrap();
+        let mut rng = engine_core::rng::seeded(1);
+        let errors = dispatch_once(&mut world, &registry, &mut rng, &mut host, 0);
+        assert_eq!(errors.len(), 1, "{name} should have failed to run");
+        let message = errors[0].1.to_string();
+        assert!(
+            message.contains("nil value"),
+            "{name} should fail because the global doesn't exist, got: {message}"
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `coroutine` is included in the sandbox's stdlib allowlist proactively
+/// (nothing in-repo uses it yet) since it's a pure-language feature useful
+/// for future cutscene/dialogue-sequencing scripts — this proves it's
+/// actually usable, not dead weight.
+#[test]
+fn coroutines_are_usable_inside_a_script() {
+    let dir = std::env::temp_dir().join(format!(
+        "engine-script-test-coroutine-{}",
+        std::process::id()
+    ));
+    let path = write_script(
+        &dir,
+        "uses_coroutine.lua",
+        "function on_tick(components, tick, dt)\n  local co = coroutine.create(function()\n    coroutine.yield(1)\n    return 2\n  end)\n  local ok1, v1 = coroutine.resume(co)\n  local ok2, v2 = coroutine.resume(co)\n  return { Counter = { value = v1 * 10 + v2 } }\nend\n",
+    );
+
+    let mut world = hecs::World::new();
+    let entity = world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+    ));
+
+    let registry = registry();
+    let mut host = ScriptHost::new().unwrap();
+    host.load_file(&path).unwrap();
+    let mut rng = engine_core::rng::seeded(1);
+    let errors = dispatch_once(&mut world, &registry, &mut rng, &mut host, 0);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+    assert_eq!(world.get::<&Counter>(entity).unwrap().value, 12);
+
+    std::fs::remove_dir_all(&dir).ok();
+}

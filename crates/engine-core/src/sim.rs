@@ -1,6 +1,6 @@
 use crate::resources::Resources;
 use crate::rng::{self, EngineRng};
-use crate::scheduler::Scheduler;
+use crate::scheduler::{Scheduler, SystemError};
 
 pub struct Sim {
     pub world: hecs::World,
@@ -27,21 +27,27 @@ impl Sim {
         &mut self.scheduler
     }
 
-    pub fn step(&mut self) {
+    /// Advances the sim by one tick. Only increments `self.tick` on success
+    /// — a tick that failed partway through a system didn't complete, so
+    /// its number is not consumed. Returns the failing system's name
+    /// alongside its `SystemError` on failure (see `Scheduler::tick`).
+    pub fn step(&mut self) -> Result<(), (String, SystemError)> {
         self.scheduler.tick(
             &mut self.world,
             &mut self.rng,
             &mut self.resources,
             self.tick,
             self.dt,
-        );
+        )?;
         self.tick += 1;
+        Ok(())
     }
 
-    pub fn run(&mut self, ticks: u64) {
+    pub fn run(&mut self, ticks: u64) -> Result<(), (String, SystemError)> {
         for _ in 0..ticks {
-            self.step();
+            self.step()?;
         }
+        Ok(())
     }
 }
 
@@ -52,7 +58,19 @@ mod tests {
     #[test]
     fn run_advances_tick_counter_by_exactly_n() {
         let mut sim = Sim::new(0, 1.0 / 60.0);
-        sim.run(10);
+        sim.run(10).unwrap();
         assert_eq!(sim.tick, 10);
+    }
+
+    #[test]
+    fn step_does_not_advance_tick_on_a_failing_system() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        fn failing(_args: &mut crate::scheduler::SystemArgs) -> Result<(), SystemError> {
+            Err(SystemError::new("TEST_FAILED", "intentional"))
+        }
+        sim.scheduler_mut().add_system("failing", failing);
+        let err = sim.step().unwrap_err();
+        assert_eq!(err.0, "failing");
+        assert_eq!(sim.tick, 0);
     }
 }

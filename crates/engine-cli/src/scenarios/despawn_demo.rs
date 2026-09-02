@@ -9,7 +9,7 @@
 //! movement_system}` are, so it's still scene-authorable.
 
 use engine_core::inspect::ComponentDumper;
-use engine_core::scheduler::SystemArgs;
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::sim::Sim;
 use engine_core::Transform;
 use engine_physics::{physics_step, BodyType, Collider, ColliderShape, RigidBody};
@@ -31,7 +31,7 @@ pub struct DespawnAfter {
 /// *before* `"physics"` in scene/scenario system order so a
 /// physics-attached despawn is evicted from `PhysicsState` the same tick
 /// it happens, rather than a tick later.
-pub(crate) fn despawn_after_system(args: &mut SystemArgs) {
+pub(crate) fn despawn_after_system(args: &mut SystemArgs) -> Result<(), SystemError> {
     let expired: Vec<hecs::Entity> = args
         .world
         .query::<&mut DespawnAfter>()
@@ -44,6 +44,7 @@ pub(crate) fn despawn_after_system(args: &mut SystemArgs) {
     for entity in expired {
         let _ = args.world.despawn(entity);
     }
+    Ok(())
 }
 
 pub(crate) fn dump_despawn_after(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {

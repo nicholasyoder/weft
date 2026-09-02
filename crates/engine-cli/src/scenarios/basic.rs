@@ -1,5 +1,5 @@
 use engine_core::inspect::ComponentDumper;
-use engine_core::scheduler::SystemArgs;
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::sim::Sim;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -42,12 +42,13 @@ pub fn build(seed: u64) -> Sim {
     sim
 }
 
-pub(crate) fn movement_system(args: &mut SystemArgs) {
+pub(crate) fn movement_system(args: &mut SystemArgs) -> Result<(), SystemError> {
     for (_e, (pos, vel)) in args.world.query::<(&mut Position, &Velocity)>().iter() {
         pos.x += vel.x * args.dt;
         pos.y += vel.y * args.dt;
         pos.z += vel.z * args.dt;
     }
+    Ok(())
 }
 
 pub(crate) fn dump_position(e: &hecs::EntityRef) -> Option<(&'static str, serde_json::Value)> {

@@ -56,7 +56,7 @@ fn holding_d_moves_the_player_in_positive_x() {
     input.set_held(KeyCode::D, true);
     sim.resources.insert(input);
 
-    sim.run(30);
+    sim.run(30).unwrap();
 
     let x = sim
         .world
@@ -122,16 +122,16 @@ fn releasing_the_key_lets_the_ball_decelerate() {
     let mut held = Input::default();
     held.set_held(KeyCode::D, true);
     sim.resources.insert(held);
-    sim.run(19);
+    sim.run(19).unwrap();
     let x_before_last_held_tick = x(&sim);
-    sim.run(1);
+    sim.run(1).unwrap();
     let speed_while_held = x(&sim) - x_before_last_held_tick;
 
     // Release, let damping act for a while, then measure the same way.
     sim.resources.insert(Input::default());
-    sim.run(29);
+    sim.run(29).unwrap();
     let x_before_last_coast_tick = x(&sim);
-    sim.run(1);
+    sim.run(1).unwrap();
     let speed_after_coasting = x(&sim) - x_before_last_coast_tick;
 
     assert!(
@@ -167,7 +167,7 @@ fn no_input_leaves_the_player_at_rest_horizontally() {
 
     // No Input resource inserted at all — player_control_system must
     // no-op, not panic.
-    sim.run(30);
+    sim.run(30).unwrap();
 
     let position = sim
         .world

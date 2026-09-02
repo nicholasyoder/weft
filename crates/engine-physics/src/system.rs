@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use engine_core::scheduler::SystemArgs;
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::Transform;
 use rapier3d::prelude as rp;
 
@@ -83,7 +83,7 @@ fn evict_despawned(state: &mut PhysicsState, world: &hecs::World) {
 /// advances the simulation by `args.dt`, then writes each non-fixed body's
 /// updated pose back to its `Transform`. Registered into `SystemRegistry`
 /// as `"physics"`.
-pub fn physics_step(args: &mut SystemArgs) {
+pub fn physics_step(args: &mut SystemArgs) -> Result<(), SystemError> {
     let state = args.resources.get_or_insert_with(PhysicsState::default);
     evict_despawned(state, args.world);
 
@@ -138,6 +138,7 @@ pub fn physics_step(args: &mut SystemArgs) {
         // this never spuriously wakes a sleeping body).
         body.reset_forces(false);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -186,7 +187,7 @@ mod tests {
         sim.scheduler_mut().add_system("physics", physics_step);
         let ball = spawn_ball(&mut sim, 10.0);
 
-        sim.step();
+        sim.step().unwrap();
         let after_one_tick = sim.world.get::<&Transform>(ball).unwrap().position.y;
         assert!(
             after_one_tick < 10.0,
@@ -201,7 +202,7 @@ mod tests {
         spawn_ground(&mut sim);
         let ball = spawn_ball(&mut sim, 3.0);
 
-        sim.run(300);
+        sim.run(300).unwrap();
 
         let resting_y = sim.world.get::<&Transform>(ball).unwrap().position.y;
         // Ground top is at y=0.1, ball radius 0.5: resting center ~= 0.6.
@@ -218,7 +219,7 @@ mod tests {
         spawn_ground(&mut sim);
         let ground = sim.world.query::<&RigidBody>().iter().next().unwrap().0;
 
-        sim.run(60);
+        sim.run(60).unwrap();
 
         let position = sim.world.get::<&Transform>(ground).unwrap().position;
         assert_eq!(position, Vec3::ZERO);
@@ -245,7 +246,7 @@ mod tests {
         // physics_step lazily registers a spawned entity into PhysicsState
         // on its first tick — apply_force needs that registration to have
         // happened before it can find a handle for `ball`.
-        sim.step();
+        sim.step().unwrap();
 
         let applied = sim
             .resources
@@ -257,7 +258,7 @@ mod tests {
             "expected apply_force to find the now-registered body"
         );
 
-        sim.step();
+        sim.step().unwrap();
         let x = sim.world.get::<&Transform>(ball).unwrap().position.x;
         assert!(
             x > 0.0,
@@ -320,12 +321,12 @@ mod tests {
             Transform::from_position(Vec3::new(0.0, 100.0, 0.0)),
         ));
 
-        sim.step(); // registers the body
+        sim.step().unwrap(); // registers the body
         sim.resources
             .get_mut::<PhysicsState>()
             .unwrap()
             .apply_force(ball, Vec3::new(200.0, 0.0, 0.0), true);
-        sim.step(); // consumes the force for exactly this tick
+        sim.step().unwrap(); // consumes the force for exactly this tick
 
         let linvel_x = |sim: &Sim| {
             let state = sim.resources.get::<PhysicsState>().unwrap();
@@ -336,7 +337,7 @@ mod tests {
 
         // No more `apply_force` calls — with zero damping, X speed should
         // stay flat (only gravity, purely on Y, is still acting).
-        sim.run(10);
+        sim.run(10).unwrap();
         let speed_after_more_ticks = linvel_x(&sim);
 
         assert!(
@@ -373,12 +374,12 @@ mod tests {
         ));
 
         // Register the body, then give it a one-tick horizontal impulse.
-        sim.step();
+        sim.step().unwrap();
         sim.resources
             .get_mut::<PhysicsState>()
             .unwrap()
             .apply_force(ball, Vec3::new(200.0, 0.0, 0.0), true);
-        sim.step();
+        sim.step().unwrap();
 
         let linvel_x = |sim: &Sim| {
             let state = sim.resources.get::<PhysicsState>().unwrap();
@@ -394,7 +395,7 @@ mod tests {
         // No more force applied — with damping, speed should drop
         // substantially (an undamped body would keep coasting at roughly
         // the same speed indefinitely).
-        sim.run(30);
+        sim.run(30).unwrap();
         let speed_after_coasting = linvel_x(&sim);
         assert!(
             speed_after_coasting < speed_right_after_impulse * 0.5,
@@ -410,7 +411,7 @@ mod tests {
         sim.scheduler_mut().add_system("physics", physics_step);
         let ball = spawn_ball(&mut sim, 10.0);
 
-        sim.step(); // registers the body
+        sim.step().unwrap(); // registers the body
         assert!(
             sim.resources
                 .get::<PhysicsState>()
@@ -421,7 +422,7 @@ mod tests {
         );
 
         sim.world.despawn(ball).unwrap();
-        sim.step(); // evict_despawned should now run and remove it
+        sim.step().unwrap(); // evict_despawned should now run and remove it
 
         assert!(
             !sim.resources
@@ -440,7 +441,7 @@ mod tests {
             sim.scheduler_mut().add_system("physics", physics_step);
             spawn_ground(&mut sim);
             let ball = spawn_ball(&mut sim, 5.0);
-            sim.run(120);
+            sim.run(120).unwrap();
             let position = sim.world.get::<&Transform>(ball).unwrap().position;
             position
         };

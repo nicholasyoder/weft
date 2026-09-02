@@ -408,8 +408,21 @@ fn build_animation_clip(
 
     Ok(AnimationClip {
         duration,
-        tracks: tracks.into_values().collect(),
+        tracks: tracks_sorted_by_joint(tracks),
     })
+}
+
+/// Sorted by joint index: `tracks` is a `HashMap`, whose iteration order is
+/// randomized per-process, so an unsorted `.collect()` here made
+/// re-importing the identical file produce a different `AnimationClip` byte
+/// encoding (and thus a different content hash) on different runs — see
+/// docs/roadmap/known-issues.md. `sampling::sample` looks tracks up by
+/// `joint` field regardless of `Vec` order, so this sort changes nothing
+/// about playback, only makes the encoding stable.
+fn tracks_sorted_by_joint(tracks: HashMap<u16, JointTrack>) -> Vec<JointTrack> {
+    let mut tracks: Vec<JointTrack> = tracks.into_values().collect();
+    tracks.sort_by_key(|t| t.joint);
+    tracks
 }
 
 fn node_world_transform_for_mesh(document: &gltf::Document, mesh_index: usize) -> Option<Mat4> {
@@ -528,5 +541,34 @@ fn unsupported(path: &str, reason: &str) -> AssetError {
     AssetError::GltfUnsupported {
         path: path.to_string(),
         reason: reason.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_track(joint: u16) -> JointTrack {
+        JointTrack {
+            joint,
+            translation: None,
+            rotation: None,
+            scale: None,
+        }
+    }
+
+    #[test]
+    fn tracks_sorted_by_joint_is_deterministic_regardless_of_hashmap_order() {
+        let mut tracks = HashMap::new();
+        // Insertion order intentionally not joint-ascending; a `HashMap`'s
+        // own iteration order is randomized per-process regardless, so this
+        // test asserts the *output* invariant directly rather than trying
+        // to force a particular (unpredictable) input iteration order.
+        for joint in [4u16, 0, 3, 1, 2] {
+            tracks.insert(joint, empty_track(joint));
+        }
+        let sorted = tracks_sorted_by_joint(tracks);
+        let joints: Vec<u16> = sorted.iter().map(|t| t.joint).collect();
+        assert_eq!(joints, vec![0, 1, 2, 3, 4]);
     }
 }

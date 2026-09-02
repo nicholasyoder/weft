@@ -87,6 +87,21 @@ impl CliError {
         Self::new(source.code(), source.to_string())
     }
 
+    /// A registered system (`system`) failed mid-tick (`tick`) — see
+    /// [ADR-0017](../../../docs/decisions/0017-system-error-channel.md).
+    /// `error.code` is the domain-specific code the failing system's own
+    /// underlying error type already defines (e.g. `ASSET_NOT_FOUND`,
+    /// `AUDIO_CLIP_DECODE_ERROR`), reused verbatim rather than wrapped in a
+    /// generic "system failed" code.
+    pub fn from_system_error(
+        system: &str,
+        tick: u64,
+        error: &engine_core::scheduler::SystemError,
+    ) -> Self {
+        Self::new(error.code, error.message.clone())
+            .with_context(serde_json::json!({ "system": system, "tick": tick }))
+    }
+
     pub fn unsupported_import_extension(path: &std::path::Path, extension: &str) -> Self {
         Self::new(
             "IMPORT_UNSUPPORTED_EXTENSION",

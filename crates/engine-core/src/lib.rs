@@ -18,4 +18,5 @@ pub use hecs;
 pub use input::{Input, KeyCode};
 pub use joint_palette::JointPalette;
 pub use resources::Resources;
+pub use scheduler::SystemError;
 pub use transform::Transform;

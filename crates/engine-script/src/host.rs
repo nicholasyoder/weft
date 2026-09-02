@@ -15,6 +15,21 @@ use crate::types::Script;
 const NO_RANDOM_MESSAGE: &str =
     "math.random/math.randomseed are disabled: scripts have no RNG access yet (see ADR-0006). Use engine.random/engine.random_int instead (see ADR-0012).";
 
+/// The Lua standard-library allowlist scripts run under. **Not**
+/// `StdLib::ALL_SAFE`: that flag set (checked directly against mlua's own
+/// source) includes `IO`/`OS`/`PACKAGE`, none of which are safe to expose
+/// to content scripts — it only excludes `DEBUG`/`FFI`. `COROUTINE` is
+/// included proactively (nothing uses it yet) since it's a pure-language
+/// feature with no filesystem/OS access, useful for cutscene/dialogue
+/// sequencing in more sophisticated scripts later — extending this set is
+/// a one-line change if a concrete future need shows up, same as any other
+/// "revisit when" item in this project. Lua's base library (`print`,
+/// `pairs`, `pcall`, `error`, `setmetatable`, ...) loads unconditionally
+/// regardless of this set and is unaffected.
+fn sandbox_stdlib() -> StdLib {
+    StdLib::COROUTINE | StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH
+}
+
 /// Owns a sandboxed Lua VM and one private environment table per loaded
 /// script file, and dispatches per-tick calls into `Script`-tagged
 /// entities. See ADR-0006 for why this lives outside
@@ -27,7 +42,7 @@ pub struct ScriptHost {
 
 impl ScriptHost {
     pub fn new() -> Result<Self, ScriptError> {
-        let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default()).map_err(|e| {
+        let lua = Lua::new_with(sandbox_stdlib(), LuaOptions::default()).map_err(|e| {
             ScriptError::LoadFailed {
                 path: "<sandbox init>".to_string(),
                 source: e,

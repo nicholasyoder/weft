@@ -11,7 +11,7 @@
 //! component keeps the count correct regardless of how a pickup happens to
 //! be implemented.
 
-use engine_core::scheduler::SystemArgs;
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_render::Text;
 use serde::{Deserialize, Serialize};
 
@@ -40,11 +40,12 @@ const TOTAL_PICKUPS: usize = 3;
 /// tick's despawns) is unavoidable with a plain system, the same lag
 /// category `camera_follow_system` already accepts reading post-physics
 /// transforms one step later than the event that caused them.
-pub fn hud_system(args: &mut SystemArgs) {
+pub fn hud_system(args: &mut SystemArgs) -> Result<(), SystemError> {
     let remaining = args.world.query::<&Pickup>().iter().count();
     let collected = TOTAL_PICKUPS.saturating_sub(remaining);
 
     for (_, text) in args.world.query::<&mut Text>().iter() {
         text.content = format!("Pickups: {collected}/{TOTAL_PICKUPS}");
     }
+    Ok(())
 }

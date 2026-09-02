@@ -4,7 +4,7 @@
 //! new engine mechanism (see ROADMAP.md Phase 8 / docs/decisions/0010).
 
 use engine_core::input::KeyCode;
-use engine_core::scheduler::SystemArgs;
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_physics::PhysicsState;
 use serde::{Deserialize, Serialize};
 
@@ -25,9 +25,9 @@ fn default_force() -> f32 {
 /// force to every `PlayerControl`-tagged entity's rigid body. Must be
 /// registered *before* "physics" in scene order — `PhysicsState::apply_force`
 /// sets a pending force rapier's `physics_step` clears every `world.step()`.
-pub fn player_control_system(args: &mut SystemArgs) {
+pub fn player_control_system(args: &mut SystemArgs) -> Result<(), SystemError> {
     let Some(input) = args.resources.get::<engine_core::Input>() else {
-        return;
+        return Ok(());
     };
 
     let mut dir = glam::Vec3::ZERO;
@@ -56,12 +56,13 @@ pub fn player_control_system(args: &mut SystemArgs) {
     targets.sort_by_key(|(entity, _)| entity.to_bits());
 
     if dir == glam::Vec3::ZERO {
-        return;
+        return Ok(());
     }
     let Some(state) = args.resources.get_mut::<PhysicsState>() else {
-        return;
+        return Ok(());
     };
     for (entity, force) in targets {
         state.apply_force(entity, dir * force, true);
     }
+    Ok(())
 }

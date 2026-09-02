@@ -1,14 +1,30 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use engine_assets::AssetStore;
-use engine_core::scheduler::SystemArgs;
+use engine_assets::{AssetError, AssetStore};
+use engine_core::scheduler::{SystemArgs, SystemError};
 use engine_core::{AssetsDir, AudioSettings, SoundEventQueue};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::Tween;
 
 use crate::backend::AudioBackend;
 use crate::components::{AudioSource, SoundsPlayed};
+use crate::error::AudioError;
+
+/// Converts an `AssetError` (unresolvable clip hash) into the
+/// `SystemError` `audio_step` returns — can't be a `From` impl
+/// (`SystemError`/`AssetError` are both foreign to this crate, so the
+/// orphan rules block it), so it's a plain function, mirroring
+/// `engine-anim`'s identical helper.
+fn asset_error_to_system_error(e: AssetError) -> SystemError {
+    SystemError::new(e.code(), e.to_string())
+}
+
+/// Converts an `AudioError` (a corrupt/undecodable clip) into the
+/// `SystemError` `audio_step` returns.
+fn audio_error_to_system_error(e: AudioError) -> SystemError {
+    SystemError::new(e.code(), e.to_string())
+}
 
 /// Lazily-decoded audio clips, held alongside per-entity "have I started
 /// this `AudioSource` yet" tracking — the same "cache keyed by content
@@ -27,21 +43,24 @@ struct AudioCache {
 
 impl AudioCache {
     /// Decodes and caches the clip at `hash` if not already cached. An
-    /// unresolvable or corrupt hash panics with a clear message — this is
-    /// scene-authored/scripted data reaching a system with no
-    /// `Result`-returning path (`System = fn(&mut SystemArgs)`), the same
-    /// posture `AnimCache::ensure_clip`/`ensure_skeleton` already
-    /// establish and explain in detail.
-    fn ensure_clip(&mut self, store: &AssetStore, hash: &str) {
+    /// unresolvable hash is a structured `SystemError` built from the
+    /// underlying `AssetError`; a resolvable-but-corrupt clip is a
+    /// structured `SystemError` built from a new `AudioError::ClipDecodeFailed`
+    /// — the same posture `AnimCache::ensure_clip`/`ensure_skeleton`
+    /// establish, reused here instead of panicking.
+    fn ensure_clip(&mut self, store: &AssetStore, hash: &str) -> Result<(), SystemError> {
         if self.clips.contains_key(hash) {
-            return;
+            return Ok(());
         }
-        let bytes = store.get(hash).unwrap_or_else(|e| {
-            panic!("AudioSource/engine.play_sound references unknown clip '{hash}': {e}")
-        });
-        let decoded = StaticSoundData::from_cursor(Cursor::new(bytes))
-            .unwrap_or_else(|e| panic!("failed to decode audio clip '{hash}': {e}"));
+        let bytes = store.get(hash).map_err(asset_error_to_system_error)?;
+        let decoded = StaticSoundData::from_cursor(Cursor::new(bytes)).map_err(|e| {
+            audio_error_to_system_error(AudioError::ClipDecodeFailed {
+                hash: hash.to_string(),
+                source: e,
+            })
+        })?;
         self.clips.insert(hash.to_string(), decoded);
+        Ok(())
     }
 
     fn clip(&self, hash: &str) -> &StaticSoundData {
@@ -106,7 +125,7 @@ impl AudioState {
 /// writing a dumpable `SoundsPlayed` snapshot per entity — this is what
 /// lets batch commands observe "which sounds fired" without ever opening a
 /// real device (see ADR-0016).
-pub fn audio_step(args: &mut SystemArgs) {
+pub fn audio_step(args: &mut SystemArgs) -> Result<(), SystemError> {
     let events = std::mem::take(
         &mut args
             .resources
@@ -116,7 +135,7 @@ pub fn audio_step(args: &mut SystemArgs) {
     apply_sounds_played(args.world, &events);
 
     let Some(assets_dir) = args.resources.get::<AssetsDir>().map(|a| a.0.clone()) else {
-        return;
+        return Ok(());
     };
     let settings = args
         .resources
@@ -129,7 +148,7 @@ pub fn audio_step(args: &mut SystemArgs) {
     state.cache.evict_despawned(args.world);
 
     for event in &events {
-        state.cache.ensure_clip(&store, &event.clip);
+        state.cache.ensure_clip(&store, &event.clip)?;
         let clip = state.cache.clip(&event.clip);
         if let Some(backend) = &mut state.backend {
             backend.play_one_shot(clip, event.volume * settings.sfx * settings.master);
@@ -146,7 +165,7 @@ pub fn audio_step(args: &mut SystemArgs) {
         if state.cache.is_started(entity) || !source.playing {
             continue;
         }
-        state.cache.ensure_clip(&store, &source.clip);
+        state.cache.ensure_clip(&store, &source.clip)?;
         let clip = state.cache.clip(&source.clip);
         let handle = state.backend.as_mut().and_then(|backend| {
             backend.play_source(
@@ -161,6 +180,7 @@ pub fn audio_step(args: &mut SystemArgs) {
     if let Some(AudioBackend::Mix(mixdown)) = &mut state.backend {
         mixdown.render(args.dt);
     }
+    Ok(())
 }
 
 fn apply_sounds_played(world: &mut hecs::World, events: &[engine_core::SoundEvent]) {
