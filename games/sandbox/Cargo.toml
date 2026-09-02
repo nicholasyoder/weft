@@ -26,3 +26,5 @@ wgpu.workspace = true
 [dev-dependencies]
 assert_cmd.workspace = true
 engine-script = { path = "../../crates/engine-script" }
+engine-anim = { path = "../../crates/engine-anim" }
+engine-audio = { path = "../../crates/engine-audio" }

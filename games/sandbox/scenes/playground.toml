@@ -18,7 +18,21 @@
 # [[system]] here — see hud_system's doc comment). "audio" (ADR-0016) drains
 # each tick's engine.play_sound calls from the previous tick's script
 # dispatch — pickup.lua fires one the same tick it despawns a pickup, so a
-# collect always has an audible confirmation.
+# collect always has an audible confirmation. "animation" has no ordering
+# dependency on anything else in this scene (it only reads/writes its own
+# entity's Animator/JointPalette), so it's appended last.
+#
+# "rig" is a decorative, always-looping skinned+animated prop (the hand-built
+# two-joint fixture from crates/engine-assets/tests/fixtures/skinned.gltf,
+# per debt-cleanup-plan.md Phase 8 — no rigged asset-gen pipeline exists yet,
+# see ADR-0015's "revisit when" note) and "ambience" is a looping background
+# AudioSource — both exist purely to give animation/looping-audio real
+# cross-subsystem coverage in a live game scene, not isolated crate fixtures.
+
+[audio]
+master = 1.0
+music = 1.0
+sfx = 1.0
 
 [[entity]]
 name = "ground"
@@ -203,6 +217,27 @@ target = [0.0, 0.5, 0.0]
 offset = [0.0, 6.0, 8.0]
 
 [[entity]]
+name = "rig"
+[entity.components.Transform]
+position = [4.5, 1.5, -3.5]
+scale = [2.0, 2.0, 2.0]
+[entity.components.MeshRef]
+mesh = { asset = "5d0273423d165efd7b4d3914b7ce151ce9cf8373b81c63a1f0ad2b9aee743fe6" }
+skin = "26862da01b41fbe9b918231e97458add2d9dbc7b79ba2ee3ca3814e9586e8959"
+[entity.components.Material]
+color = [0.6, 0.7, 0.85]
+[entity.components.Animator]
+skeleton = "1fed23f7a2ee38ca01b083f25a621bb7f93873ba69cb6899414af925809c9b98"
+clip = "632d2405c7df15af61d7abcfdc9d882f6045ebff71b95512c091299b998832b3"
+
+[[entity]]
+name = "ambience"
+[entity.components.AudioSource]
+clip = "d7deee8d7217ce63aab802ad7365a59cacfd243392dc1bd03b0a9d454aa494df"
+looping = true
+volume = 0.4
+
+[[entity]]
 name = "hud"
 # Weft's text-rendering/minimal-UI layer (ADR-0014), first used for real
 # here: content is overwritten every tick by hud_system, this is just the
@@ -228,3 +263,5 @@ name = "camera_follow"
 name = "hud"
 [[system]]
 name = "audio"
+[[system]]
+name = "animation"

@@ -1,0 +1,11 @@
+ambient-hum.ogg (originally "spaceEngineLow_000.ogg")
+
+Created/distributed by Kenney (www.kenney.nl)
+Part of "Sci-fi Sounds" (1.0), creation date 11-10-2020.
+
+License: Creative Commons Zero (CC0)
+http://creativecommons.org/publicdomain/zero/1.0/
+
+This content is free to use in personal, educational and commercial
+projects. Attribution is not required, but crediting Kenney or
+www.kenney.nl is appreciated.

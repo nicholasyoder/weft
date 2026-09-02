@@ -2,7 +2,7 @@
 
 **Working checklist, not a spec — same living-document rule as the rest of `docs/roadmap/`.** Addresses the 9 "Architectural debt" items and 4 "Process / testing gaps" items in [`known-issues.md`](known-issues.md) (the 3 Critical items and 5 Real bugs from the same 2026-09-02 review are already fixed). Split into 8 independent phases so risk stays contained — each phase should land as its own reviewable, tested commit-set, with the same gate every phase in this project uses: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, all clean before committing.
 
-**Status: Phases 1, 2, 3, 4, 5, 6, and 7 done (2026-09-02).** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
+**Status: all 8 phases done (2026-09-02) — this plan is complete.** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
 
 Research behind this plan (three parallel codebase surveys) found the roadmap text itself had drifted in two places, corrected in Phase 1: only 1 of 4 scenarios (not 2) actually lacks a scene-file counterpart, and `engine-anim`'s error-handling "fork" bullet mis-described its current shape — `engine-anim` no longer panics (fixed by the earlier Critical-item work), but it still doesn't own a `thiserror`-based error type the way `engine-scene`/`engine-render`/`engine-audio`/`engine-assets`/`engine-script` each do; it converts a foreign `engine_assets::AssetError` into `SystemError` via a small local helper instead. Not a fixed instance of the same convention — a different, arguably fine design with nothing of its own left to convert.
 
@@ -103,7 +103,7 @@ No CI exists anywhere (repo is on GitHub). AGENTS.md's hard gate is enforced by 
 
 ---
 
-## Phase 8 — Sandbox animation + looping-audio coverage
+## Phase 8 — Sandbox animation + looping-audio coverage — DONE (2026-09-02)
 
 `games/sandbox/scenes/playground.toml` has no `Animator`/skinned mesh and no `[audio]` table — only one-shot SFX is exercised. No cross-subsystem test surface exists anywhere for animation+physics, animation+rendering, or looping-audio+despawn in a real game scene.
 
@@ -114,3 +114,5 @@ No CI exists anywhere (repo is on GitHub). AGENTS.md's hard gate is enforced by 
 - **Explicitly out of scope**: authoring a *properly rigged/animated* asset through `tools/asset-gen`'s headless-Blender pipeline — zero skinning/animation export support exists there today; building it is a separate, larger effort ADR-0015 already flags as a deliberate future step.
 
 **Verify**: `cargo test -p sandbox`, `cargo run -p sandbox` still exits cleanly, full workspace gate.
+
+*(In practice: the plan's assumption held for the mesh/skin/skeleton/clip import — the exact hashes reproduced `animation_demo.toml`'s, confirming content-addressing. The one real design decision made during implementation, not pre-planned: both `animation_step` and `audio_step` are silent no-ops without an `engine_core::AssetsDir` resource in `Sim`'s `Resources`, which `engine_scene::load` never inserts (only `engine-cli`'s `SimSource::build` does) — existing sandbox tests never needed it, so the two new test files (`animation.rs`, `ambient_audio.rs`) insert it explicitly, the one non-obvious wiring gap this phase surfaced. The despawn-interaction angle did fit naturally: `ambient_audio.rs` despawns a `Pickup` entity directly mid-run and asserts `audio_step` keeps succeeding and the ambient `AudioSource` entity survives untouched — direct regression coverage for the `b497819` despawn-divergence bug class, reusing `sandbox::hud::Pickup` rather than needing a new fixture. The ambient loop clip is a newly-sourced CC0 asset (`assets-src/ambient-hum.ogg`, Kenney's "Sci-fi Sounds" pack, `spaceEngineLow_000.ogg`) per an explicit user choice over reusing the existing `pickup.ogg` one-shot chime. The animated "rig" entity's first placement (tucked in a corner) rendered completely outside the camera frustum in a throwaway sanity render — repositioned to `[4.5, 1.5, -3.5]` with `scale = [2.0, 2.0, 2.0]` (the hand-built fixture is a small flat quad by construction) after visually confirming it, still just a floating rectangle — as expected, since building a real rigged asset is explicitly out of scope here.)*
