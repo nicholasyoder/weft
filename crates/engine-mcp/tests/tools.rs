@@ -150,34 +150,170 @@ async fn every_tool_succeeds_against_a_fixture() {
     client.cancel().await.ok();
 }
 
+/// Asserts `call_tool(name, arguments)` fails with the given structured
+/// `error.code`, on a caller-supplied client (so callers can share one
+/// connection across several assertions instead of spawning a subprocess
+/// per case).
+async fn assert_tool_error(
+    client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    name: &'static str,
+    arguments: Value,
+    expected_code: &str,
+) {
+    let result = client
+        .call_tool(CallToolRequestParams::new(name).with_arguments(args(arguments)))
+        .await
+        .unwrap();
+    assert_eq!(result.is_error, Some(true), "{name}: {result:?}");
+    assert_eq!(
+        result.structured_content.unwrap()["error"]["code"],
+        expected_code,
+        "{name}"
+    );
+}
+
 #[tokio::test]
 async fn structured_errors_survive_the_mcp_boundary() {
     let client = connect().await;
 
-    let run = client
-        .call_tool(
-            CallToolRequestParams::new("weft_run")
-                .with_arguments(args(json!({ "scene": "does-not-exist.toml" }))),
-        )
-        .await
-        .unwrap();
-    assert_eq!(run.is_error, Some(true));
-    assert_eq!(
-        run.structured_content.unwrap()["error"]["code"],
-        "SCENE_READ_ERROR"
-    );
+    assert_tool_error(
+        &client,
+        "weft_run",
+        json!({ "scene": "does-not-exist.toml" }),
+        "SCENE_READ_ERROR",
+    )
+    .await;
+    assert_tool_error(
+        &client,
+        "weft_test",
+        json!({ "scenario": "does-not-exist" }),
+        "SCENARIO_NOT_FOUND",
+    )
+    .await;
 
-    let test = client
-        .call_tool(
-            CallToolRequestParams::new("weft_test")
-                .with_arguments(args(json!({ "scenario": "does-not-exist" }))),
-        )
+    // A scenario/scene pair given together conflicts the same way for any
+    // tool that accepts both — `weft_test` is representative.
+    assert_tool_error(
+        &client,
+        "weft_test",
+        json!({ "scenario": "basic", "scene": RUN_SCENE }),
+        "SIM_SOURCE_CONFLICT",
+    )
+    .await;
+
+    // `ticks: 0` is rejected identically by every tool that accepts ticks —
+    // cheap enough to check all five rather than just one representative.
+    assert_tool_error(
+        &client,
+        "weft_run",
+        json!({ "scene": RUN_SCENE, "ticks": 0 }),
+        "INVALID_TICKS",
+    )
+    .await;
+    assert_tool_error(
+        &client,
+        "weft_test",
+        json!({ "scenario": "basic", "ticks": 0 }),
+        "INVALID_TICKS",
+    )
+    .await;
+    assert_tool_error(
+        &client,
+        "weft_inspect",
+        json!({ "scenario": "basic", "ticks": 0 }),
+        "INVALID_TICKS",
+    )
+    .await;
+    assert_tool_error(
+        &client,
+        "weft_render",
+        json!({ "scene": RENDER_SCENE, "to": scratch_path("invalid-ticks.png").to_str().unwrap(), "ticks": 0 }),
+        "INVALID_TICKS",
+    )
+    .await;
+    assert_tool_error(
+        &client,
+        "weft_mix",
+        json!({ "scene": MIX_SCENE, "to": scratch_path("invalid-ticks.wav").to_str().unwrap(), "ticks": 0 }),
+        "INVALID_TICKS",
+    )
+    .await;
+
+    // One error path each for the four tools the above cases don't touch,
+    // reusing fixtures `engine-cli`'s own test suite already established
+    // for the same underlying errors.
+    assert_tool_error(
+        &client,
+        "weft_replay",
+        json!({ "recording": "../engine-cli/tests/fixtures/recording_invalid_source.json" }),
+        "RECORDING_INVALID_SOURCE",
+    )
+    .await;
+    // `RUN_SCENE` (basic.toml) has no Camera entity — same fixture
+    // `engine-cli/tests/render.rs`'s no-camera test uses.
+    assert_tool_error(
+        &client,
+        "weft_render",
+        json!({ "scene": RUN_SCENE, "to": scratch_path("no-camera.png").to_str().unwrap() }),
+        "RENDER_NO_CAMERA",
+    )
+    .await;
+    assert_tool_error(
+        &client,
+        "weft_mix",
+        json!({ "scene": "does-not-exist.toml", "to": scratch_path("no-scene.wav").to_str().unwrap() }),
+        "SCENE_READ_ERROR",
+    )
+    .await;
+    assert_tool_error(
+        &client,
+        "weft_import",
+        json!({ "input": "Cargo.toml", "assets_dir": scratch_path("import-unsupported").to_str().unwrap() }),
+        "IMPORT_UNSUPPORTED_EXTENSION",
+    )
+    .await;
+
+    client.cancel().await.ok();
+}
+
+/// Probes what happens when `rmcp`'s own JSON-schema deserialization
+/// rejects a call *before* a tool body runs — `RunParams.scene` is
+/// required, so an empty arguments object never reaches `WeftServer::run`
+/// at all. This bypasses `CliError` entirely; AGENTS.md calls an
+/// unobserved case here "a bug worth filing," so this test exists to pin
+/// down and assert on whatever the actual current behavior is.
+#[tokio::test]
+async fn missing_required_field_is_rejected_before_the_tool_body_runs() {
+    let client = connect().await;
+
+    let result = client
+        .call_tool(CallToolRequestParams::new("weft_run").with_arguments(args(json!({}))))
         .await
         .unwrap();
-    assert_eq!(test.is_error, Some(true));
-    assert_eq!(
-        test.structured_content.unwrap()["error"]["code"],
-        "SCENARIO_NOT_FOUND"
+
+    // Confirmed by running this test: rmcp's `Parameters<T>` extractor
+    // rejects this itself, before `WeftServer::run` ever executes, as a
+    // tool-level result (not a protocol-level `Err` — `call_tool` above
+    // still returns `Ok`). It fails loudly (`is_error: Some(true)`, a
+    // human-readable "missing field `scene`" message) rather than silently
+    // no-oping or panicking, so it satisfies AGENTS.md's core "fails
+    // loudly" goal. But its shape doesn't match this crate's own
+    // documented contract (the module doc comment's "error payload is
+    // always `{\"error\": {code, message, context}}`"): there is no
+    // `structured_content` at all here, just a plain-text `content`
+    // message with no `error.code` a caller could match on. Asserting on
+    // this pinned, real gap rather than papering over it — see
+    // known-issues.md.
+    assert_eq!(result.is_error, Some(true), "{result:?}");
+    assert!(
+        result.structured_content.is_none(),
+        "expected no structured_content for a pre-tool-body schema rejection, got: {result:?}"
+    );
+    let text = result.content.first().and_then(|c| c.as_text()).unwrap();
+    assert!(
+        text.text.contains("scene"),
+        "expected the rejection message to mention the missing field, got: {}",
+        text.text
     );
 
     client.cancel().await.ok();
