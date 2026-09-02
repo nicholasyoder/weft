@@ -6,6 +6,7 @@ members = [
     "crates/engine-assets",
     "crates/engine-render",
     "crates/engine-physics",
+    "crates/engine-anim",
     "crates/engine-script",
     "crates/engine-cli",
     "crates/engine-mcp",
