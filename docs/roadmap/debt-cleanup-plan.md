@@ -2,7 +2,7 @@
 
 **Working checklist, not a spec — same living-document rule as the rest of `docs/roadmap/`.** Addresses the 9 "Architectural debt" items and 4 "Process / testing gaps" items in [`known-issues.md`](known-issues.md) (the 3 Critical items and 5 Real bugs from the same 2026-09-02 review are already fixed). Split into 8 independent phases so risk stays contained — each phase should land as its own reviewable, tested commit-set, with the same gate every phase in this project uses: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, all clean before committing.
 
-**Status: Phases 1, 2, and 4 done (2026-09-02).** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
+**Status: Phases 1, 2, 4, and 6 done (2026-09-02).** Mark each phase's heading done (like the Critical items in `known-issues.md`) as it lands, and update the corresponding `known-issues.md` bullet to struck-through/fixed at the same time.
 
 Research behind this plan (three parallel codebase surveys) found the roadmap text itself had drifted in two places, corrected in Phase 1: only 1 of 4 scenarios (not 2) actually lacks a scene-file counterpart, and `engine-anim`'s error-handling "fork" bullet mis-described its current shape — `engine-anim` no longer panics (fixed by the earlier Critical-item work), but it still doesn't own a `thiserror`-based error type the way `engine-scene`/`engine-render`/`engine-audio`/`engine-assets`/`engine-script` each do; it converts a foreign `engine_assets::AssetError` into `SystemError` via a small local helper instead. Not a fixed instance of the same convention — a different, arguably fine design with nothing of its own left to convert.
 
@@ -78,7 +78,7 @@ Two `glam` versions are active today: `0.29.3` (workspace pin) and `0.33.6` (pul
 
 ---
 
-## Phase 6 — CI (GitHub Actions)
+## Phase 6 — CI (GitHub Actions) — DONE (2026-09-02)
 
 No CI exists anywhere (repo is on GitHub). AGENTS.md's hard gate is enforced by agent discipline alone today.
 
