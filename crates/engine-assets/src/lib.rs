@@ -1,7 +1,10 @@
+pub mod animation;
 mod error;
 mod font_import;
 mod gltf_import;
 pub mod mesh;
+pub mod skeleton;
+pub mod skin;
 mod store;
 mod texture_import;
 

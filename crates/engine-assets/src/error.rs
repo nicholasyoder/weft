@@ -26,6 +26,18 @@ pub enum AssetError {
     MeshEncodeFailed(String),
     #[error("failed to decode mesh data: {0}")]
     MeshDecodeFailed(String),
+    #[error("failed to encode skin data: {0}")]
+    SkinEncodeFailed(String),
+    #[error("failed to decode skin data: {0}")]
+    SkinDecodeFailed(String),
+    #[error("failed to encode skeleton data: {0}")]
+    SkeletonEncodeFailed(String),
+    #[error("failed to decode skeleton data: {0}")]
+    SkeletonDecodeFailed(String),
+    #[error("failed to encode animation data: {0}")]
+    AnimationEncodeFailed(String),
+    #[error("failed to decode animation data: {0}")]
+    AnimationDecodeFailed(String),
 }
 
 impl AssetError {
@@ -37,6 +49,9 @@ impl AssetError {
             Self::GltfUnsupported { .. } => "ASSET_GLTF_UNSUPPORTED",
             Self::ImageDecodeFailed { .. } => "ASSET_IMAGE_ERROR",
             Self::MeshEncodeFailed(_) | Self::MeshDecodeFailed(_) => "ASSET_ENCODE_ERROR",
+            Self::SkinEncodeFailed(_) | Self::SkinDecodeFailed(_) => "ASSET_ENCODE_ERROR",
+            Self::SkeletonEncodeFailed(_) | Self::SkeletonDecodeFailed(_) => "ASSET_ENCODE_ERROR",
+            Self::AnimationEncodeFailed(_) | Self::AnimationDecodeFailed(_) => "ASSET_ENCODE_ERROR",
         }
     }
 }

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use engine_assets::{import_font, import_gltf, import_texture, AssetStore};
+use engine_assets::{
+    animation, import_font, import_gltf, import_texture, mesh, skeleton, skin, AssetStore,
+};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -108,6 +110,84 @@ fn importing_a_loose_image_file_stores_it_as_png() {
         b"\x89PNG\r\n\x1a\n",
         "stored bytes should be a PNG"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_a_skinned_gltf_produces_skin_skeleton_and_clip_data() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let imported = import_gltf(&fixture("skinned.gltf"), &store).unwrap();
+
+    let skin_hash = imported.skin_hash.expect("expected skin data");
+    let skeleton_hash = imported.skeleton_hash.expect("expected skeleton data");
+    let clip_hash = imported.clip_hash.expect("expected an animation clip");
+
+    // The mesh node's own [5, 0, 0] translation must NOT be baked into the
+    // stored vertex positions for a skinned mesh (see ADR-0005 decision 4's
+    // skinned-mesh exception, ADR-0015) — positions must match the raw
+    // authored quad exactly.
+    let mesh_data = mesh::decode(&store.get(&imported.mesh_hash).unwrap()).unwrap();
+    assert_eq!(
+        mesh_data.positions,
+        vec![
+            [-0.5, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.5, 1.0, 0.0],
+            [-0.5, 1.0, 0.0],
+        ]
+    );
+
+    let skin_data = skin::decode(&store.get(&skin_hash).unwrap()).unwrap();
+    assert_eq!(
+        skin_data.joints,
+        vec![[0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]]
+    );
+    assert_eq!(skin_data.weights.len(), 4);
+    assert_eq!(skin_data.weights[0], [1.0, 0.0, 0.0, 0.0]);
+
+    let skeleton = skeleton::decode(&store.get(&skeleton_hash).unwrap()).unwrap();
+    assert_eq!(skeleton.joints.len(), 2);
+    assert_eq!(skeleton.joints[0].parent, None);
+    assert_eq!(skeleton.joints[1].parent, Some(0));
+    assert_eq!(
+        skeleton.joints[1].local_rest_transform.translation,
+        [0.0, 1.0, 0.0]
+    );
+    assert_eq!(
+        skeleton.joints[1].inverse_bind_matrix,
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0, 1.0],
+        ]
+    );
+
+    let clip = animation::decode(&store.get(&clip_hash).unwrap()).unwrap();
+    assert_eq!(clip.duration, 1.0);
+    assert_eq!(clip.tracks.len(), 1);
+    assert_eq!(clip.tracks[0].joint, 1);
+    assert!(clip.tracks[0].translation.is_none());
+    assert!(clip.tracks[0].scale.is_none());
+    let rotation = clip.tracks[0].rotation.as_ref().unwrap();
+    assert_eq!(rotation.times, vec![0.0, 1.0]);
+    assert_eq!(rotation.values[0], [0.0, 0.0, 0.0, 1.0]);
+    let sin45 = std::f32::consts::FRAC_1_SQRT_2;
+    assert!((rotation.values[1][2] - sin45).abs() < 1e-5);
+    assert!((rotation.values[1][3] - sin45).abs() < 1e-5);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn importing_an_unskinned_gltf_leaves_skin_fields_none() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let imported = import_gltf(&fixture("box.gltf"), &store).unwrap();
+    assert!(imported.skin_hash.is_none());
+    assert!(imported.skeleton_hash.is_none());
+    assert!(imported.clip_hash.is_none());
     std::fs::remove_dir_all(&dir).ok();
 }
 
