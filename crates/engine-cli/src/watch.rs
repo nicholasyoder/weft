@@ -35,16 +35,32 @@ pub fn run(
         Err(()) => return ExitCode::FAILURE,
     };
 
+    // Created once and kept alive for the whole `watch` session — never
+    // dropped/recreated per iteration. Dropping it around each rerun (the
+    // previous design) meant an edit landing during a rerun was simply
+    // never observed, and the window for that grows with `--ticks`. Kept
+    // alive, the same edit just queues in `rx` and is picked up on the
+    // very next `recv()` once the rerun finishes.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut debouncer = match new_debouncer(DEBOUNCE, tx) {
+        Ok(d) => d,
+        Err(e) => {
+            CliError::new("WATCH_INIT_ERROR", e.to_string()).print(format.is_json());
+            return ExitCode::FAILURE;
+        }
+    };
+    // Directories already registered with `debouncer` — a scene edit can
+    // introduce a script in a directory not seen before, so this only ever
+    // grows; a directory for a since-removed script path is left watched
+    // too (harmless — `notify` per-directory watches are cheap and this
+    // never needs fewer than it already has).
+    let mut watched_dirs: HashSet<PathBuf> = HashSet::new();
+
     loop {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut debouncer = match new_debouncer(DEBOUNCE, tx) {
-            Ok(d) => d,
-            Err(e) => {
-                CliError::new("WATCH_INIT_ERROR", e.to_string()).print(format.is_json());
-                return ExitCode::FAILURE;
-            }
-        };
         for dir in watch_dirs(&watch_paths) {
+            if watched_dirs.contains(&dir) {
+                continue;
+            }
             if let Err(e) = debouncer.watcher().watch(&dir, RecursiveMode::NonRecursive) {
                 CliError::new(
                     "WATCH_INIT_ERROR",
@@ -53,6 +69,7 @@ pub fn run(
                 .print(format.is_json());
                 return ExitCode::FAILURE;
             }
+            watched_dirs.insert(dir);
         }
 
         let canonical: HashSet<PathBuf> =
@@ -79,7 +96,6 @@ pub fn run(
                 Err(_) => break false,
             }
         };
-        drop(debouncer);
         if !changed {
             // The watch channel disconnected (debouncer thread gone) rather
             // than a real file change — nothing more to watch for.

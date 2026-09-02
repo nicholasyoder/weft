@@ -14,11 +14,23 @@ pub struct WatchProcess {
 
 impl WatchProcess {
     pub fn spawn(scene: &Path) -> Self {
+        Self::spawn_with_ticks(scene, 60)
+    }
+
+    /// Like `spawn`, but with an explicit `--ticks` instead of the
+    /// (clap-level) default of 60 — lets a test make each run/rerun take
+    /// real wall-clock time (a plain scene's per-tick cost is on the order
+    /// of microseconds, so a large enough tick count is a deterministic,
+    /// portable way to widen a rerun's duration without relying on a
+    /// sleep primitive, which sandboxed Lua scripts don't have).
+    pub fn spawn_with_ticks(scene: &Path, ticks: u64) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_engine"))
             .args([
                 "run",
                 &scene.display().to_string(),
                 "--watch",
+                "--ticks",
+                &ticks.to_string(),
                 "--format",
                 "json",
             ])
