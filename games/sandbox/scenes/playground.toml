@@ -1,22 +1,24 @@
-# The first Weft-built game: a physics playground. WASD rolls the red ball
-# around a walled arena with a fixed obstacle pillar. See ADR-0010 and
-# ROADMAP.md Phase 8. Three gold pickups are scripted (games/sandbox/
-# scripts/pickup.lua, see ADR-0013): roll up to one and hold E to collect
-# it — the first content actually using Weft's scripting API in a real,
-# live-playable game rather than a batch test fixture. A HUD counter
-# ("Pickups: N/3", see ADR-0014) shows progress on screen — the first use of
-# Weft's text-rendering/minimal-UI layer in a real game.
+# The first Weft-built game: a physics playground. WASD moves a capsule
+# player (a real kinematic character controller, see
+# games/sandbox/src/player_control.rs, physics-substrate-plan.md Phase 7 —
+# Space jumps) around a walled arena with a fixed obstacle pillar. See
+# ADR-0010 and ROADMAP.md Phase 8. Three gold pickups are scripted
+# (games/sandbox/scripts/pickup.lua, see ADR-0013 and Phase 6): walk up to
+# one (a real rapier sensor overlap) and hold E to collect it — the first
+# content actually using Weft's scripting API in a real, live-playable game
+# rather than a batch test fixture. A HUD counter ("Pickups: N/3", see
+# ADR-0014) shows progress on screen — the first use of Weft's
+# text-rendering/minimal-UI layer in a real game.
 #
 # A kinematic "moving_platform" entity oscillates on a sine wave (see
 # games/sandbox/src/moving_platform.rs, physics-substrate-plan.md Phase 5) —
 # the first live proof of a KinematicPositionBased body outside a unit test.
 #
 # System order matters: "player_control" and "moving_platform" must both run
-# before "physics" — they each stage a pending change (a force, a kinematic
-# target) on a rigid body that "physics" consumes and clears every tick (see
-# PhysicsState::apply_force's and set_kinematic_translation's doc comments).
-# "camera_follow"
-# must run after "physics" so it reads the ball's post-physics position for
+# before "physics" — they each stage a pending change (a kinematic target,
+# via PhysicsState::move_character/set_kinematic_translation) on a rigid
+# body that "physics" consumes when it steps the world. "camera_follow"
+# must run after "physics" so it reads the player's post-physics position for
 # this tick, not last tick's. Script dispatch (the pickups) is automatic —
 # any scene with a Script component gets one, no [[system]] entry needed.
 # "hud" runs last so it counts each tick's despawns with the least possible
@@ -228,24 +230,22 @@ function = "on_tick"
 name = "player"
 [entity.components.Transform]
 position = [0.0, 2.0, 4.0]
+scale = [0.3, 0.8, 0.3]
+# physics-substrate-plan.md Phase 7: a real kinematic character controller
+# (PhysicsState::move_character) replaces the original force-driven rolling
+# sphere — wall sliding, step handling, and ground snapping now come from
+# rapier's own character-controller mechanism instead of raw per-tick
+# forces + damping.
 [entity.components.RigidBody]
-body_type = "dynamic"
-# A rolling sphere loses very little speed to plain contact friction, so
-# without damping the ball would coast at whatever speed a tap left it at
-# until it hits a wall. This damping is what makes the ball actually slow
-# down once WASD is released, instead of "shooting" to the nearest barrier.
-linear_damping = 4.0
-angular_damping = 4.0
+body_type = "kinematic_position_based"
 [entity.components.Collider]
-shape = { kind = "sphere", radius = 0.5 }
-restitution = 0.1
-friction = 0.6
+shape = { kind = "capsule", half_height = 0.5, radius = 0.3 }
 [entity.components.MeshRef]
 mesh = "sphere"
 [entity.components.Material]
 color = [0.85, 0.2, 0.2]
 [entity.components.PlayerControl]
-force = 12.0
+[entity.components.CharacterVelocity]
 
 [[entity]]
 name = "camera"

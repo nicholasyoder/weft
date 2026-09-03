@@ -37,6 +37,22 @@ impl PhysicsState {
     /// the collider a capsule — `set_next_kinematic_translation` already
     /// silently no-ops on a non-kinematic body, so there's nothing useful
     /// to add here beyond what rapier itself already guards.
+    ///
+    /// **Gotcha confirmed empirically (physics-substrate-plan.md Phase 7),
+    /// not documented by rapier itself**: never register a kinematic
+    /// character's *first* pose in exact zero-gap contact with a surface
+    /// (e.g. computing a "resting height" analytically and spawning there
+    /// directly). Rapier's shape-cast TOI solver is degenerate at exactly
+    /// zero distance — repeatedly calling this with a small downward
+    /// `desired_translation` from such a pose does *not* reliably block at
+    /// the true surface; depending on the exact magnitude it can leak a
+    /// small amount through every single call (slow, unbounded sinking
+    /// over many ticks) or not block at all. Spawning with even a small
+    /// real gap (letting the character fall and settle on its own, the
+    /// normal case for anything under gravity) sidesteps this entirely —
+    /// once genuinely resolved from a real approach, repeated small
+    /// downward calls are blocked cleanly and the pose is stable
+    /// indefinitely.
     pub fn move_character(
         &mut self,
         entity: hecs::Entity,

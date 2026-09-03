@@ -8,7 +8,7 @@ use std::path::Path;
 use camera_follow::CameraFollow;
 use hud::Pickup;
 use moving_platform::MovingPlatform;
-use player_control::PlayerControl;
+use player_control::{CharacterVelocity, PlayerControl};
 
 /// The sandbox's own extended registry: engine-cli's base components/systems
 /// plus `PlayerControl`/`CameraFollow`. Exposed separately from `play` so
@@ -27,6 +27,11 @@ pub fn registry() -> (
         dump::<PlayerControl>,
     );
     components.register("CameraFollow", load::<CameraFollow>, dump::<CameraFollow>);
+    components.register(
+        "CharacterVelocity",
+        load::<CharacterVelocity>,
+        dump::<CharacterVelocity>,
+    );
     components.register("Pickup", load::<Pickup>, dump::<Pickup>);
     components.register(
         "MovingPlatform",

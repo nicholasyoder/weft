@@ -16,7 +16,11 @@ fn camera_tracks_the_player_with_a_fixed_offset() {
 
     let player = sim.world.spawn((
         Transform::from_position(Vec3::new(3.0, 0.5, -2.0)),
-        PlayerControl { force: 12.0 },
+        PlayerControl {
+            speed: 6.0,
+            jump_speed: 7.0,
+            gravity: 20.0,
+        },
     ));
     let camera = sim.world.spawn((
         Transform::from_position(Vec3::ZERO),
@@ -53,7 +57,11 @@ fn camera_moves_when_the_player_moves() {
 
     let player = sim.world.spawn((
         Transform::from_position(Vec3::ZERO),
-        PlayerControl { force: 12.0 },
+        PlayerControl {
+            speed: 6.0,
+            jump_speed: 7.0,
+            gravity: 20.0,
+        },
     ));
     let camera = sim.world.spawn((
         Transform::from_position(Vec3::ZERO),
