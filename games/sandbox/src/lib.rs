@@ -1,11 +1,13 @@
 pub mod camera_follow;
 pub mod hud;
+pub mod moving_platform;
 pub mod player_control;
 
 use std::path::Path;
 
 use camera_follow::CameraFollow;
 use hud::Pickup;
+use moving_platform::MovingPlatform;
 use player_control::PlayerControl;
 
 /// The sandbox's own extended registry: engine-cli's base components/systems
@@ -26,11 +28,17 @@ pub fn registry() -> (
     );
     components.register("CameraFollow", load::<CameraFollow>, dump::<CameraFollow>);
     components.register("Pickup", load::<Pickup>, dump::<Pickup>);
+    components.register(
+        "MovingPlatform",
+        load::<MovingPlatform>,
+        dump::<MovingPlatform>,
+    );
 
     let mut systems = engine_cli::registry::systems();
     systems.register("player_control", player_control::player_control_system);
     systems.register("camera_follow", camera_follow::camera_follow_system);
     systems.register("hud", hud::hud_system);
+    systems.register("moving_platform", moving_platform::moving_platform_system);
 
     (components, systems)
 }

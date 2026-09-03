@@ -7,9 +7,15 @@
 # ("Pickups: N/3", see ADR-0014) shows progress on screen — the first use of
 # Weft's text-rendering/minimal-UI layer in a real game.
 #
-# System order matters: "player_control" must run before "physics" — it sets
-# a pending force on the ball's rigid body that "physics" consumes and clears
-# every tick (see PhysicsState::apply_force's doc comment). "camera_follow"
+# A kinematic "moving_platform" entity oscillates on a sine wave (see
+# games/sandbox/src/moving_platform.rs, physics-substrate-plan.md Phase 5) —
+# the first live proof of a KinematicPositionBased body outside a unit test.
+#
+# System order matters: "player_control" and "moving_platform" must both run
+# before "physics" — they each stage a pending change (a force, a kinematic
+# target) on a rigid body that "physics" consumes and clears every tick (see
+# PhysicsState::apply_force's and set_kinematic_translation's doc comments).
+# "camera_follow"
 # must run after "physics" so it reads the ball's post-physics position for
 # this tick, not last tick's. Script dispatch (the pickups) is automatic —
 # any scene with a Script component gets one, no [[system]] entry needed.
@@ -143,6 +149,25 @@ mesh = { asset = "cfd8be5091c1bfeaa3b98b3d4a5bdc918e7c31d4de0c980a795579ef568a73
 color = [0.500000, 0.500000, 0.550000]
 
 [[entity]]
+name = "moving_platform"
+[entity.components.Transform]
+position = [4.0, 1.0, 0.0]
+scale = [2.0, 0.3, 2.0]
+[entity.components.RigidBody]
+body_type = "kinematic_position_based"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [1.0, 0.15, 1.0] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.6, 0.6, 0.2]
+[entity.components.MovingPlatform]
+origin = [4.0, 1.0, 0.0]
+axis = [1.0, 0.0, 0.0]
+amplitude = 3.0
+period = 4.0
+
+[[entity]]
 name = "pickup_1"
 [entity.components.Transform]
 position = [4.0, 0.4, 4.0]
@@ -255,6 +280,8 @@ font = "034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d"
 
 [[system]]
 name = "player_control"
+[[system]]
+name = "moving_platform"
 [[system]]
 name = "physics"
 [[system]]
