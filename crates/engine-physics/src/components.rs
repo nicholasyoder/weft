@@ -3,16 +3,26 @@ use serde::{Deserialize, Serialize};
 
 /// How a rigid body behaves under simulation.
 ///
-/// Kinematic bodies (driven externally by setting their pose directly,
-/// rather than by forces) aren't supported yet — nothing in the engine
-/// drives an entity's `Transform` after spawn except physics itself, so
-/// there's no concrete consumer for kinematic driving yet. Add it when a
-/// real need shows up rather than half-wiring it now.
+/// `KinematicPositionBased` is driven externally: some other system (not
+/// physics itself — see `PhysicsState::set_kinematic_translation`) decides
+/// an entity's next pose each tick, calling it before "physics" runs.
+/// Rapier applies that pose exactly — gravity/forces never touch a
+/// non-dynamic body (see `RigidBody::add_force`'s dynamic-only guard) — and
+/// `physics_step`'s pose write-back treats it like a dynamic body: whatever
+/// pose was set gets copied back into `Transform` every tick, so other
+/// systems (camera follow, rendering, …) see the current position.
+///
+/// Only position-based kinematics are offered. Rapier also has a
+/// velocity-based kinematic mode, but every concrete consumer here (moving
+/// platforms, a character controller) wants "I decide the exact next
+/// pose," not "I set a velocity and let rapier integrate it" — add
+/// velocity-based kinematics if a real need shows up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BodyType {
     Dynamic,
     Fixed,
+    KinematicPositionBased,
 }
 
 /// Marks an entity as physics-simulated. Requires an accompanying
@@ -39,16 +49,18 @@ pub struct RigidBody {
 }
 
 /// A collider's shape, in engine-native terms — never a raw rapier type in
-/// a scene file (see ADR-0008). Deliberately narrow for Phase 6, mirroring
-/// the single-camera (Phase 2) and single-mesh-per-glTF (Phase 3) scoping
-/// precedent: box and sphere only. An unrecognized `kind` fails scene load
+/// a scene file (see ADR-0008). An unrecognized `kind` fails scene load
 /// with a normal, structured serde/TOML error, the same as any other
-/// malformed component field.
+/// malformed component field. `Capsule` maps to rapier's Y-axis-aligned
+/// `ColliderBuilder::capsule_y` — the standard upright-character
+/// orientation; no separate axis field, matching `Box`/`Sphere`'s own "no
+/// orientation knob" simplicity.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ColliderShape {
     Box { half_extents: Vec3 },
     Sphere { radius: f32 },
+    Capsule { half_height: f32, radius: f32 },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -79,7 +91,27 @@ mod tests {
             ColliderShape::Box { half_extents } => {
                 assert_eq!(half_extents, Vec3::new(1.0, 2.0, 3.0))
             }
-            ColliderShape::Sphere { .. } => panic!("expected Box"),
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn collider_shape_capsule_round_trips_through_json() {
+        let shape = ColliderShape::Capsule {
+            half_height: 1.0,
+            radius: 0.3,
+        };
+        let json = serde_json::to_value(shape).unwrap();
+        let back: ColliderShape = serde_json::from_value(json).unwrap();
+        match back {
+            ColliderShape::Capsule {
+                half_height,
+                radius,
+            } => {
+                assert_eq!(half_height, 1.0);
+                assert_eq!(radius, 0.3);
+            }
+            _ => panic!("expected Capsule"),
         }
     }
 

@@ -15,6 +15,16 @@ use crate::components::{BodyType, Collider, ColliderShape, RigidBody};
 pub struct PhysicsState {
     pub world: rp::PhysicsWorld,
     bodies: HashMap<hecs::Entity, rp::RigidBodyHandle>,
+    /// Entity -> its collider's rapier handle. Alongside `entity_by_collider`
+    /// below, lets later queries (overlap/raycast/character-controller
+    /// mechanisms) translate between an entity and the collider rapier's
+    /// narrow-phase/query-pipeline results are actually keyed on. Unused by
+    /// this phase's own logic — populated and evicted here so those don't
+    /// need a second bookkeeping pass.
+    colliders: HashMap<hecs::Entity, rp::ColliderHandle>,
+    /// The reverse of `colliders` — a raycast/overlap hit only gives back a
+    /// `ColliderHandle`; this is what resolves it to the owning `Entity`.
+    entity_by_collider: HashMap<rp::ColliderHandle, hecs::Entity>,
 }
 
 impl PhysicsState {
@@ -44,6 +54,33 @@ impl PhysicsState {
         body.add_force(force, wake_up);
         true
     }
+
+    /// Sets a `KinematicPositionBased` body's target translation for the
+    /// next physics step. Rapier computes the velocity needed to reach it
+    /// and applies it exactly — nothing else in the solver ever touches a
+    /// kinematic body's pose (gravity/forces are gated to dynamic bodies
+    /// only; see `RigidBody::add_force`'s own guard), so whatever was set
+    /// here is exactly what `physics_step`'s pose write-back copies into
+    /// `Transform` next tick.
+    ///
+    /// Returns `false` (silent no-op, never a panic) if `entity` has no
+    /// registered body yet, mirroring `apply_force`. Also a harmless no-op
+    /// — via rapier's own internal `is_kinematic()` guard — if `entity`'s
+    /// body exists but isn't actually `KinematicPositionBased`.
+    pub fn set_kinematic_translation(
+        &mut self,
+        entity: hecs::Entity,
+        translation: glam::Vec3,
+    ) -> bool {
+        let Some(&handle) = self.bodies.get(&entity) else {
+            return false;
+        };
+        let Some(body) = self.world.bodies.get_mut(handle) else {
+            return false;
+        };
+        body.set_next_kinematic_translation(translation);
+        true
+    }
 }
 
 fn build_collider(collider: &Collider) -> rp::ColliderBuilder {
@@ -52,6 +89,10 @@ fn build_collider(collider: &Collider) -> rp::ColliderBuilder {
             rp::ColliderBuilder::cuboid(half_extents.x, half_extents.y, half_extents.z)
         }
         ColliderShape::Sphere { radius } => rp::ColliderBuilder::ball(radius),
+        ColliderShape::Capsule {
+            half_height,
+            radius,
+        } => rp::ColliderBuilder::capsule_y(half_height, radius),
     };
     builder
         .restitution(collider.restitution)
@@ -71,7 +112,10 @@ fn evict_despawned(state: &mut PhysicsState, world: &hecs::World) {
     stale.sort_by_key(|e| e.to_bits());
     for entity in stale {
         if let Some(handle) = state.bodies.remove(&entity) {
-            state.world.remove_body(handle);
+            state.world.remove_body(handle); // also drops its rapier-side collider
+        }
+        if let Some(collider_handle) = state.colliders.remove(&entity) {
+            state.entity_by_collider.remove(&collider_handle);
         }
     }
 }
@@ -99,13 +143,15 @@ pub fn physics_step(args: &mut SystemArgs) -> Result<(), SystemError> {
         let body_builder = match rb.body_type {
             BodyType::Dynamic => rp::RigidBodyBuilder::dynamic(),
             BodyType::Fixed => rp::RigidBodyBuilder::fixed(),
+            BodyType::KinematicPositionBased => rp::RigidBodyBuilder::kinematic_position_based(),
         }
         .pose(pose)
         .linear_damping(rb.linear_damping)
         .angular_damping(rb.angular_damping);
-        let (body_handle, _collider_handle) =
-            state.world.insert(body_builder, build_collider(&col));
+        let (body_handle, collider_handle) = state.world.insert(body_builder, build_collider(&col));
         state.bodies.insert(entity, body_handle);
+        state.colliders.insert(entity, collider_handle);
+        state.entity_by_collider.insert(collider_handle, entity);
     }
 
     state.world.integration_parameters.dt = args.dt;
@@ -178,6 +224,100 @@ mod tests {
             },
             Transform::from_position(Vec3::new(0.0, height, 0.0)),
         ))
+    }
+
+    fn spawn_kinematic(sim: &mut Sim, position: Vec3) -> hecs::Entity {
+        sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::KinematicPositionBased,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Capsule {
+                    half_height: 0.5,
+                    radius: 0.3,
+                },
+                restitution: 0.0,
+                friction: 0.5,
+            },
+            Transform::from_position(position),
+        ))
+    }
+
+    #[test]
+    fn build_collider_maps_capsule_shape_to_a_rapier_capsule() {
+        let collider = Collider {
+            shape: ColliderShape::Capsule {
+                half_height: 1.0,
+                radius: 0.3,
+            },
+            restitution: 0.0,
+            friction: 0.5,
+        };
+        let built = build_collider(&collider).build();
+        let capsule = built
+            .shape()
+            .as_capsule()
+            .expect("expected a capsule shape");
+        assert_eq!(capsule.radius, 0.3);
+        assert!(
+            (capsule.height() - 2.0).abs() < 1e-6,
+            "expected height = 2 * half_height = 2.0, got {}",
+            capsule.height()
+        );
+    }
+
+    #[test]
+    fn kinematic_body_pose_is_driven_by_set_kinematic_translation_not_the_solver() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut().add_system("physics", physics_step);
+        let platform = spawn_kinematic(&mut sim, Vec3::new(0.0, 5.0, 0.0));
+
+        sim.step().unwrap(); // registers the body at y=5.0
+
+        // With no set_kinematic_translation call, gravity/the solver must NOT
+        // move a kinematic body — unlike a dynamic body it has zero effective
+        // mass for force purposes (see RigidBody::add_force's dynamic-only
+        // guard), so nothing should touch its pose across many ticks.
+        sim.run(30).unwrap();
+        let untouched_y = sim.world.get::<&Transform>(platform).unwrap().position.y;
+        assert!(
+            (untouched_y - 5.0).abs() < 1e-5,
+            "expected an undriven kinematic body to stay exactly where it was \
+             registered (gravity/solver must not move it), got y={untouched_y}"
+        );
+
+        // Drive it externally; the next tick's Transform must equal EXACTLY
+        // what was commanded, not something the solver derived independently.
+        let target = Vec3::new(2.0, 9.0, -3.0);
+        let moved = sim
+            .resources
+            .get_mut::<PhysicsState>()
+            .unwrap()
+            .set_kinematic_translation(platform, target);
+        assert!(
+            moved,
+            "expected set_kinematic_translation to find the registered body"
+        );
+
+        sim.step().unwrap();
+        let position = sim.world.get::<&Transform>(platform).unwrap().position;
+        assert_eq!(
+            position, target,
+            "expected the kinematic body's Transform to be driven exactly by \
+             set_kinematic_translation, not something the solver computed"
+        );
+
+        // And it must stay there next tick with no new command — proving the
+        // pose isn't being reset or drifted by the solver on its own.
+        sim.step().unwrap();
+        let position_next_tick = sim.world.get::<&Transform>(platform).unwrap().position;
+        assert_eq!(
+            position_next_tick, target,
+            "expected the kinematic body to hold its last commanded pose with \
+             no further set_kinematic_translation calls"
+        );
     }
 
     #[test]
