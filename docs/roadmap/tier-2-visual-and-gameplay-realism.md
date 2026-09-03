@@ -24,6 +24,8 @@ No shadow pass exists yet. Natural to sequence after multi-light support lands, 
 
 ## Physics gameplay substrate
 
+**See [`physics-substrate-plan.md`](physics-substrate-plan.md) for the active phased plan tackling this item.**
+
 `engine-physics` proves basic dynamics work — the sandbox's rolling ball is real — but exposes almost none of the query/gameplay surface real levels and encounters need:
 
 - **Raycast / shape-cast queries** — `PhysicsState` exposes `apply_force` only today; no way to ask "what's in front of me" or "what's under this point."
