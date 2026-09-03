@@ -32,7 +32,7 @@ This is a structural gap, not a per-crate oversight: any future system with a re
 - Every crate that registers a system now has a `SystemError`-returning function, whether or not it can actually fail — a small, permanent tax on adding a new system, in exchange for the failure channel existing at all should a future one need it.
 - `engine-anim`/`engine-audio` no longer panic on bad content data; `cargo run -p engine-cli --bin engine -- test --scene <bad-clip-hash> --format json` now exits 1 with a structured `{"error": {"code": "ASSET_NOT_FOUND", ...}}` instead of a Rust backtrace (verified directly, not just by unit test).
 - `Sim::step`/`Sim::run`'s signatures changed (now `Result`-returning) — every direct caller across the workspace (test helpers included) needed a `?`/`.unwrap()` added; none needed deeper changes since none relied on the old infallible signature for anything but happy-path chaining.
-- The `HashMap<Entity, RigidBodyHandle>` iteration in `engine-physics`'s pose write-back loop (a separate, lower-severity determinism concern flagged in the same review) is **not** touched by this ADR — out of scope here, still tracked in known-issues.md.
+- The `HashMap<Entity, RigidBodyHandle>` iteration in `engine-physics`'s pose write-back loop (a separate, lower-severity determinism concern flagged in the same review) was **not** touched by this ADR — out of scope here. (Fixed separately, 2026-09-02: the loop now collects+sorts by entity id before iterating, matching `evict_despawned`'s existing convention.)
 
 ## Revisit when
 
