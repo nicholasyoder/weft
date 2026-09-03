@@ -1,7 +1,7 @@
 //! Read-only queries against `PhysicsState`'s already-computed rapier
-//! narrow-phase/query-pipeline state (sensor overlap, raycasts; the
-//! character-controller mechanism lands here in a later phase — see
-//! docs/roadmap/physics-substrate-plan.md). Split out from `system.rs`
+//! narrow-phase/query-pipeline state (sensor overlap, raycasts — see
+//! `character.rs` for the character-controller mechanism, which drives a
+//! body rather than just querying state). Split out from `system.rs`
 //! (which owns `PhysicsState`'s definition and the per-tick `physics_step`
 //! mutation path) — a second `impl PhysicsState` block here is ordinary
 //! Rust; only cross-crate `impl`s are restricted by the orphan rule.

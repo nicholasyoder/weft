@@ -1,3 +1,4 @@
+pub mod character;
 pub mod components;
 pub mod queries;
 pub mod system;
