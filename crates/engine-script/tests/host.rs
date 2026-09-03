@@ -494,6 +494,97 @@ fn engine_play_sound_queues_a_sound_event_for_audio_step_to_drain() {
 }
 
 #[test]
+fn engine_overlapping_with_no_args_reports_sensor_overlaps_for_the_calling_entity() {
+    // `colliders`/`entity_by_collider` (what `PhysicsState::overlapping`
+    // reads) are only `pub(crate)` inside `engine-physics` — an external
+    // crate's test can't hand-build a `PhysicsState`, so this goes through
+    // a real `Sim` + `engine_physics::physics_step`, same as
+    // `engine-physics`'s own `queries.rs` tests.
+    let dir =
+        std::env::temp_dir().join(format!("engine-script-test-overlap-{}", std::process::id()));
+    let path = write_script(
+        &dir,
+        "reports_overlap.lua",
+        "function on_tick(components, tick, dt)\n  local hits = engine.overlapping()\n  return { Counter = { value = #hits } }\nend\n",
+    );
+
+    let mut sim = engine_core::sim::Sim::new(0, 1.0 / 60.0);
+    sim.scheduler_mut()
+        .add_system("physics", engine_physics::physics_step);
+
+    // The scripted entity IS the sensor — Script + Counter (for write-back)
+    // + a sensor Collider/Fixed RigidBody/Transform all on one entity, so
+    // engine.overlapping()'s no-arg self-default targets it directly.
+    let sensor = sim.world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+        engine_physics::RigidBody {
+            body_type: engine_physics::BodyType::Fixed,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+        },
+        engine_physics::Collider {
+            shape: engine_physics::ColliderShape::Sphere { radius: 2.0 },
+            restitution: 0.0,
+            friction: 0.5,
+            sensor: true,
+            membership: 1,
+            filter: u32::MAX,
+        },
+        engine_core::Transform::from_position(glam::Vec3::ZERO),
+    ));
+
+    // A solid body overlapping the sensor.
+    sim.world.spawn((
+        engine_physics::RigidBody {
+            body_type: engine_physics::BodyType::Fixed,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+        },
+        engine_physics::Collider {
+            shape: engine_physics::ColliderShape::Sphere { radius: 0.3 },
+            restitution: 0.0,
+            friction: 0.5,
+            sensor: false,
+            membership: 1,
+            filter: u32::MAX,
+        },
+        engine_core::Transform::from_position(glam::Vec3::new(1.0, 0.0, 0.0)),
+    ));
+
+    // physics_step must register + step BEFORE the script dispatch that
+    // reads PhysicsState — same first-tick-registration ordering
+    // apply_force's own engine-physics tests rely on.
+    sim.step().unwrap();
+
+    let registry = registry();
+    let mut host = ScriptHost::new().unwrap();
+    host.load_file(&path).unwrap();
+    let errors = host.dispatch(DispatchCtx {
+        world: &mut sim.world,
+        components: &registry,
+        dumpers: DUMPERS,
+        rng: &mut sim.rng,
+        input: &engine_core::Input::default(),
+        resources: &mut sim.resources,
+        tick: sim.tick,
+        dt: sim.dt,
+    });
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+
+    assert_eq!(
+        sim.world.get::<&Counter>(sensor).unwrap().value,
+        1,
+        "expected exactly the one overlapping solid body to be reported"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn engine_key_held_rejects_an_unrecognized_key_name() {
     let dir = std::env::temp_dir().join(format!(
         "engine-script-test-keyheld-bad-{}",

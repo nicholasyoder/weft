@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 engine-core = { path = "../engine-core" }
+engine-physics = { path = "../engine-physics" }
 engine-scene = { path = "../engine-scene" }
 hecs.workspace = true
 serde.workspace = true
@@ -12,3 +13,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 mlua.workspace = true
 rand.workspace = true
+
+[dev-dependencies]
+glam.workspace = true

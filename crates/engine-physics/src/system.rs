@@ -21,10 +21,10 @@ pub struct PhysicsState {
     /// narrow-phase/query-pipeline results are actually keyed on. Unused by
     /// this phase's own logic — populated and evicted here so those don't
     /// need a second bookkeeping pass.
-    colliders: HashMap<hecs::Entity, rp::ColliderHandle>,
+    pub(crate) colliders: HashMap<hecs::Entity, rp::ColliderHandle>,
     /// The reverse of `colliders` — a raycast/overlap hit only gives back a
     /// `ColliderHandle`; this is what resolves it to the owning `Entity`.
-    entity_by_collider: HashMap<rp::ColliderHandle, hecs::Entity>,
+    pub(crate) entity_by_collider: HashMap<rp::ColliderHandle, hecs::Entity>,
 }
 
 impl PhysicsState {
@@ -97,6 +97,21 @@ fn build_collider(collider: &Collider) -> rp::ColliderBuilder {
     builder
         .restitution(collider.restitution)
         .friction(collider.friction)
+        .sensor(collider.sensor)
+        .collision_groups(rp::InteractionGroups::new(
+            rp::Group::from_bits_truncate(collider.membership),
+            rp::Group::from_bits_truncate(collider.filter),
+            rp::InteractionTestMode::And,
+        ))
+        // Rapier's own default `ActiveCollisionTypes` only computes contacts/
+        // intersections for pairs involving at least one dynamic body — e.g.
+        // a Fixed sensor overlapping a KinematicPositionBased body (exactly
+        // the pickup-vs-player shape Phase 6/7 of the physics-substrate plan
+        // calls for) is silently untracked otherwise. A poll-based sensor
+        // query (`PhysicsState::overlapping`) should work regardless of
+        // which body types are involved, so every combination is enabled
+        // here rather than left at rapier's narrower default.
+        .active_collision_types(rp::ActiveCollisionTypes::all())
 }
 
 /// Removes any rapier body whose owning entity no longer exists in `world`
@@ -205,6 +220,9 @@ mod tests {
                 },
                 restitution: 0.0,
                 friction: 0.5,
+                sensor: false,
+                membership: 1,
+                filter: u32::MAX,
             },
             Transform::from_position(Vec3::ZERO),
         ));
@@ -221,6 +239,9 @@ mod tests {
                 shape: ColliderShape::Sphere { radius: 0.5 },
                 restitution: 0.0,
                 friction: 0.5,
+                sensor: false,
+                membership: 1,
+                filter: u32::MAX,
             },
             Transform::from_position(Vec3::new(0.0, height, 0.0)),
         ))
@@ -240,6 +261,9 @@ mod tests {
                 },
                 restitution: 0.0,
                 friction: 0.5,
+                sensor: false,
+                membership: 1,
+                filter: u32::MAX,
             },
             Transform::from_position(position),
         ))
@@ -254,6 +278,9 @@ mod tests {
             },
             restitution: 0.0,
             friction: 0.5,
+            sensor: false,
+            membership: 1,
+            filter: u32::MAX,
         };
         let built = build_collider(&collider).build();
         let capsule = built
@@ -265,6 +292,119 @@ mod tests {
             (capsule.height() - 2.0).abs() < 1e-6,
             "expected height = 2 * half_height = 2.0, got {}",
             capsule.height()
+        );
+    }
+
+    #[test]
+    fn build_collider_maps_sensor_and_collision_groups() {
+        let collider = Collider {
+            shape: ColliderShape::Sphere { radius: 0.5 },
+            restitution: 0.0,
+            friction: 0.5,
+            sensor: true,
+            membership: 4,
+            filter: 8,
+        };
+        let built = build_collider(&collider).build();
+        assert!(built.is_sensor());
+        let groups = built.collision_groups();
+        assert_eq!(groups.memberships, rp::Group::from_bits_truncate(4));
+        assert_eq!(groups.filter, rp::Group::from_bits_truncate(8));
+    }
+
+    #[test]
+    fn collision_groups_with_no_shared_bits_let_bodies_pass_through_each_other() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut().add_system("physics", physics_step);
+        sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Fixed,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Box {
+                    half_extents: Vec3::new(50.0, 0.1, 50.0),
+                },
+                restitution: 0.0,
+                friction: 0.5,
+                sensor: false,
+                membership: 2, // GROUP_2
+                filter: 2,     // only interacts with GROUP_2
+            },
+            Transform::from_position(Vec3::ZERO),
+        ));
+        let ball = sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Dynamic,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                restitution: 0.0,
+                friction: 0.5,
+                sensor: false,
+                membership: 1, // GROUP_1 — not in ground's filter (2)
+                filter: u32::MAX,
+            },
+            Transform::from_position(Vec3::new(0.0, 3.0, 0.0)),
+        ));
+
+        sim.run(300).unwrap(); // same duration as dynamic_body_comes_to_rest_on_fixed_ground
+
+        let final_y = sim.world.get::<&Transform>(ball).unwrap().position.y;
+        assert!(
+            final_y < -5.0,
+            "expected the ball to fall straight through the mismatched-group ground, got y={final_y}"
+        );
+    }
+
+    #[test]
+    fn collision_groups_with_shared_bits_still_collide() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut().add_system("physics", physics_step);
+        sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Fixed,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Box {
+                    half_extents: Vec3::new(50.0, 0.1, 50.0),
+                },
+                restitution: 0.0,
+                friction: 0.5,
+                sensor: false,
+                membership: 2, // GROUP_2
+                filter: 1,     // interacts with GROUP_1
+            },
+            Transform::from_position(Vec3::ZERO),
+        ));
+        let ball = sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Dynamic,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                restitution: 0.0,
+                friction: 0.5,
+                sensor: false,
+                membership: 1, // GROUP_1 — in ground's filter (1)
+                filter: 2,     // GROUP_2 — in ground's membership (2)
+            },
+            Transform::from_position(Vec3::new(0.0, 3.0, 0.0)),
+        ));
+
+        sim.run(300).unwrap();
+
+        let resting_y = sim.world.get::<&Transform>(ball).unwrap().position.y;
+        assert!(
+            (resting_y - 0.6).abs() < 0.05,
+            "expected mutually-matching non-default groups to still collide and rest around y=0.6, got y={resting_y}"
         );
     }
 
@@ -378,6 +518,9 @@ mod tests {
                 shape: ColliderShape::Sphere { radius: 0.5 },
                 restitution: 0.0,
                 friction: 0.5,
+                sensor: false,
+                membership: 1,
+                filter: u32::MAX,
             },
             Transform::from_position(Vec3::new(0.0, 100.0, 0.0)),
         ));
@@ -418,6 +561,9 @@ mod tests {
                 shape: ColliderShape::Sphere { radius: 0.5 },
                 restitution: 0.0,
                 friction: 0.5,
+                sensor: false,
+                membership: 1,
+                filter: u32::MAX,
             },
             Transform::from_position(Vec3::ZERO),
         ));
@@ -456,6 +602,9 @@ mod tests {
                 shape: ColliderShape::Sphere { radius: 0.5 },
                 restitution: 0.0,
                 friction: 0.5,
+                sensor: false,
+                membership: 1,
+                filter: u32::MAX,
             },
             Transform::from_position(Vec3::new(0.0, 100.0, 0.0)),
         ));
@@ -508,6 +657,9 @@ mod tests {
                 shape: ColliderShape::Sphere { radius: 0.5 },
                 restitution: 0.0,
                 friction: 0.5,
+                sensor: false,
+                membership: 1,
+                filter: u32::MAX,
             },
             Transform::from_position(Vec3::new(0.0, 50.0, 0.0)),
         ));

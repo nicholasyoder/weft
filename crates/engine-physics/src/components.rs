@@ -70,10 +70,45 @@ pub struct Collider {
     pub restitution: f32,
     #[serde(default = "default_friction")]
     pub friction: f32,
+    /// Marks this collider a sensor ("trigger zone"): rapier reports
+    /// overlaps against it (see `PhysicsState::overlapping`) but never
+    /// resolves a physical collision for it — a sensor never pushes
+    /// anything and nothing pushes it. Rapier itself only tracks an
+    /// "intersection pair" (what `overlapping` reads) when at least one of
+    /// the two colliders involved is a sensor; two non-sensor colliders
+    /// always get an ordinary contact pair instead.
+    #[serde(default)]
+    pub sensor: bool,
+    /// Which collision group(s) this collider is a member of — a raw
+    /// bitmask (bit 0 = rapier's `Group::GROUP_1`), not a named-layer
+    /// registry (see the Phase 2 design decision in
+    /// docs/roadmap/physics-substrate-plan.md; ADR-0008's "never leak a
+    /// raw rapier type into a scene file" rule). Defaults to `1`
+    /// (`Group::GROUP_1`), matching rapier's own
+    /// `InteractionGroups::default()`.
+    #[serde(default = "default_membership")]
+    pub membership: u32,
+    /// Which collision group(s) this collider interacts with — tested
+    /// bidirectionally against the *other* collider's `membership`, and
+    /// vice versa (both directions must match; rapier's
+    /// `InteractionTestMode::And`). Defaults to `u32::MAX` (`Group::ALL`),
+    /// matching rapier's own `InteractionGroups::default()` — an untouched
+    /// `Collider` interacts with everything, identical to pre-Phase-2
+    /// behavior.
+    #[serde(default = "default_filter")]
+    pub filter: u32,
 }
 
 fn default_friction() -> f32 {
     0.5
+}
+
+fn default_membership() -> u32 {
+    1
+}
+
+fn default_filter() -> u32 {
+    u32::MAX
 }
 
 #[cfg(test)]
@@ -121,5 +156,8 @@ mod tests {
         let collider: Collider = serde_json::from_value(json).unwrap();
         assert_eq!(collider.friction, 0.5);
         assert_eq!(collider.restitution, 0.0);
+        assert!(!collider.sensor);
+        assert_eq!(collider.membership, 1);
+        assert_eq!(collider.filter, u32::MAX);
     }
 }

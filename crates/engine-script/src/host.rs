@@ -234,6 +234,26 @@ impl ScriptHost {
                 })?;
                 engine_table.set("query", query_fn)?;
 
+                let overlapping_fn = scope.create_function(|lua_ctx, id: Option<f64>| {
+                    let target = match id {
+                        None => entity,
+                        Some(id) => decode_entity_id(id, "engine.overlapping")?,
+                    };
+                    let results = lua_ctx.create_table()?;
+                    let mut i = 1i64;
+                    if let Some(physics) = resources_cell
+                        .borrow()
+                        .get::<engine_physics::PhysicsState>()
+                    {
+                        for other in physics.overlapping(target) {
+                            results.set(i, other.to_bits().get() as f64)?;
+                            i += 1;
+                        }
+                    }
+                    Ok(results)
+                })?;
+                engine_table.set("overlapping", overlapping_fn)?;
+
                 let input = ctx.input;
                 let key_held_fn = scope.create_function(|_, name: String| {
                     let key = parse_key_name(&name).ok_or_else(|| {
@@ -246,7 +266,7 @@ impl ScriptHost {
                 engine_table.set("key_held", key_held_fn)?;
 
                 let play_sound_fn =
-                    scope.create_function(move |_, (clip, volume): (String, Option<f64>)| {
+                    scope.create_function(|_, (clip, volume): (String, Option<f64>)| {
                         resources_cell
                             .borrow_mut()
                             .get_or_insert_with(SoundEventQueue::default)

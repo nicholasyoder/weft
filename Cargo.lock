@@ -910,7 +910,9 @@ name = "engine-script"
 version = "0.1.0"
 dependencies = [
  "engine-core",
+ "engine-physics",
  "engine-scene",
+ "glam 0.33.6",
  "hecs",
  "mlua",
  "rand",

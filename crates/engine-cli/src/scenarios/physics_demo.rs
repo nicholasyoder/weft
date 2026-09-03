@@ -28,6 +28,9 @@ pub fn build(seed: u64) -> Sim {
             },
             restitution: 0.0,
             friction: 0.5,
+            sensor: false,
+            membership: 1,
+            filter: u32::MAX,
         },
     ));
     sim.world.spawn((
@@ -41,6 +44,9 @@ pub fn build(seed: u64) -> Sim {
             shape: ColliderShape::Sphere { radius: 0.5 },
             restitution: 0.0,
             friction: 0.5,
+            sensor: false,
+            membership: 1,
+            filter: u32::MAX,
         },
     ));
     sim.scheduler_mut().add_system("physics", physics_step);
