@@ -172,6 +172,11 @@ name = "pickup_1"
 [entity.components.Transform]
 position = [4.0, 0.4, 4.0]
 scale = [0.3, 0.3, 0.3]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "sphere", radius = 0.7 }
+sensor = true
 [entity.components.MeshRef]
 mesh = "sphere"
 [entity.components.Material]
@@ -186,6 +191,11 @@ name = "pickup_2"
 [entity.components.Transform]
 position = [-4.0, 0.4, -3.0]
 scale = [0.3, 0.3, 0.3]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "sphere", radius = 0.7 }
+sensor = true
 [entity.components.MeshRef]
 mesh = "sphere"
 [entity.components.Material]
@@ -200,6 +210,11 @@ name = "pickup_3"
 [entity.components.Transform]
 position = [0.0, 0.4, -6.5]
 scale = [0.3, 0.3, 0.3]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "sphere", radius = 0.7 }
+sensor = true
 [entity.components.MeshRef]
 mesh = "sphere"
 [entity.components.Material]

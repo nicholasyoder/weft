@@ -76,14 +76,12 @@ fn hud_text_reflects_collected_pickups() {
         "playground.toml should start with 3 Pickup-tagged entities"
     );
 
-    // One system step with nothing collected yet: the counter should read
-    // its starting value.
-    sim.step().unwrap();
-    assert_eq!(hud_text(&sim.world), "Pickups: 0/3");
-
-    // Move the player onto pickup_1 (scene position [4.0, 0.4, 4.0]) and
-    // dispatch the script with E held: this despawns pickup_1 (and its
-    // Pickup marker with it).
+    // Move the player onto pickup_1 (scene position [4.0, 0.4, 4.0])
+    // *before* the very first physics tick — physics-substrate-plan.md
+    // Phase 6 made pickup collection a real rapier sensor overlap, and
+    // `physics_step` only reads an entity's Transform to seed its rapier
+    // body at first registration; mutating it afterwards has no further
+    // effect (see `tests/pickup.rs`'s longer comment on this same pattern).
     {
         let player = sim
             .world
@@ -95,6 +93,17 @@ fn hud_text_reflects_collected_pickups() {
         let mut transform = sim.world.get::<&mut Transform>(player).unwrap();
         transform.position = glam::Vec3::new(4.0, 0.4, 4.0);
     }
+
+    // One system step: registers the (already-overlapping) bodies and
+    // computes this tick's sensor-overlap state, but nothing's been
+    // collected yet (no script dispatch has run) — the counter should still
+    // read its starting value.
+    sim.step().unwrap();
+    assert_eq!(hud_text(&sim.world), "Pickups: 0/3");
+
+    // Dispatch the script with E held: engine.overlapping() reports the
+    // overlap this same tick's physics step just computed, so this
+    // despawns pickup_1 (and its Pickup marker with it).
     let errors = dispatch(
         &mut sim,
         &mut host,
