@@ -254,6 +254,30 @@ impl ScriptHost {
                 })?;
                 engine_table.set("overlapping", overlapping_fn)?;
 
+                let raycast_fn = scope.create_function(
+                    |lua_ctx, (origin, direction, max_distance): (mlua::Value, mlua::Value, f32)| {
+                        let origin: glam::Vec3 = lua_ctx.from_value(origin)?;
+                        let direction: glam::Vec3 = lua_ctx.from_value(direction)?;
+                        let resources = resources_cell.borrow();
+                        let Some(physics) = resources.get::<engine_physics::PhysicsState>()
+                        else {
+                            return Ok(mlua::Value::Nil);
+                        };
+                        let Some(hit) =
+                            physics.cast_ray(origin, direction, max_distance, Some(entity))
+                        else {
+                            return Ok(mlua::Value::Nil);
+                        };
+                        let result = lua_ctx.create_table()?;
+                        result.set("id", hit.entity.to_bits().get() as f64)?;
+                        result.set("distance", hit.distance)?;
+                        result.set("point", lua_ctx.to_value(&hit.point)?)?;
+                        result.set("normal", lua_ctx.to_value(&hit.normal)?)?;
+                        Ok(mlua::Value::Table(result))
+                    },
+                )?;
+                engine_table.set("raycast", raycast_fn)?;
+
                 let input = ctx.input;
                 let key_held_fn = scope.create_function(|_, name: String| {
                     let key = parse_key_name(&name).ok_or_else(|| {

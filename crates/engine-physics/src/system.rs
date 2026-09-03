@@ -14,7 +14,7 @@ use crate::components::{BodyType, Collider, ColliderShape, RigidBody};
 #[derive(Default)]
 pub struct PhysicsState {
     pub world: rp::PhysicsWorld,
-    bodies: HashMap<hecs::Entity, rp::RigidBodyHandle>,
+    pub(crate) bodies: HashMap<hecs::Entity, rp::RigidBodyHandle>,
     /// Entity -> its collider's rapier handle. Alongside `entity_by_collider`
     /// below, lets later queries (overlap/raycast/character-controller
     /// mechanisms) translate between an entity and the collider rapier's

@@ -585,6 +585,85 @@ fn engine_overlapping_with_no_args_reports_sensor_overlaps_for_the_calling_entit
 }
 
 #[test]
+fn engine_raycast_reports_a_hit_and_always_excludes_the_caller() {
+    // Same rationale as `engine_overlapping_with_no_args_...`: `bodies`/
+    // `entity_by_collider` are only `pub(crate)` inside `engine-physics`, so
+    // this goes through a real `Sim` + `engine_physics::physics_step`.
+    let dir =
+        std::env::temp_dir().join(format!("engine-script-test-raycast-{}", std::process::id()));
+    let path = write_script(
+        &dir,
+        "reports_raycast.lua",
+        // origin/direction cross the boundary as glam::Vec3's own wire
+        // format — a 3-element sequence `[x, y, z]`, not a `{x=,y=,z=}`
+        // map (glam's serde impl serializes/deserializes Vec3 as a tuple
+        // of 3, same as Transform.position already appears to any script
+        // reading it via engine.query).
+        "function on_tick(components, tick, dt)\n  local hit = engine.raycast({0, 5, 0}, {0, -1, 0}, 100)\n  if hit == nil then\n    return { Counter = { value = -1 } }\n  end\n  return { Counter = { value = math.floor(hit.distance + 0.5) } }\nend\n",
+    );
+
+    let mut sim = engine_core::sim::Sim::new(0, 1.0 / 60.0);
+    sim.scheduler_mut()
+        .add_system("physics", engine_physics::physics_step);
+
+    // The scripted entity sits well off the ray's path, so `engine.raycast`
+    // always excluding the caller doesn't itself explain a hit/miss here —
+    // the box below is the only thing the ray can possibly find.
+    let scripted = sim.world.spawn((
+        Counter { value: 0 },
+        Script {
+            path: path.display().to_string(),
+            function: "on_tick".to_string(),
+        },
+        engine_core::Transform::from_position(glam::Vec3::new(50.0, 50.0, 50.0)),
+    ));
+
+    sim.world.spawn((
+        engine_physics::RigidBody {
+            body_type: engine_physics::BodyType::Fixed,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+        },
+        engine_physics::Collider {
+            shape: engine_physics::ColliderShape::Box {
+                half_extents: glam::Vec3::ONE,
+            },
+            restitution: 0.0,
+            friction: 0.5,
+            sensor: false,
+            membership: 1,
+            filter: u32::MAX,
+        },
+        engine_core::Transform::from_position(glam::Vec3::ZERO),
+    ));
+
+    sim.step().unwrap(); // registers both bodies before the script's raycast
+
+    let registry = registry();
+    let mut host = ScriptHost::new().unwrap();
+    host.load_file(&path).unwrap();
+    let errors = host.dispatch(DispatchCtx {
+        world: &mut sim.world,
+        components: &registry,
+        dumpers: DUMPERS,
+        rng: &mut sim.rng,
+        input: &engine_core::Input::default(),
+        resources: &mut sim.resources,
+        tick: sim.tick,
+        dt: sim.dt,
+    });
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+
+    assert_eq!(
+        sim.world.get::<&Counter>(scripted).unwrap().value,
+        4,
+        "expected the raycast to hit the box at distance 4 (origin y=5 to box top y=1)"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn engine_key_held_rejects_an_unrecognized_key_name() {
     let dir = std::env::temp_dir().join(format!(
         "engine-script-test-keyheld-bad-{}",
