@@ -36,6 +36,8 @@ fn cube_at(position: Vec3) -> (Transform, MeshRef, Material) {
         Material {
             color: [0.8, 0.2, 0.2],
             texture: None,
+            roughness: 1.0,
+            metallic: 0.0,
         },
     )
 }
@@ -188,6 +190,8 @@ fn rendering_an_imported_textured_mesh_produces_non_blank_output() {
         Material {
             color: imported.base_color,
             texture: imported.texture_hash,
+            roughness: 1.0,
+            metallic: 0.0,
         },
     ));
 
@@ -214,6 +218,8 @@ fn rendering_a_scene_with_an_unknown_asset_hash_is_a_structured_error() {
         Material {
             color: [1.0, 1.0, 1.0],
             texture: None,
+            roughness: 1.0,
+            metallic: 0.0,
         },
     ));
 

@@ -32,12 +32,22 @@ struct Uniforms {
     model: [[f32; 4]; 4],
     color: [f32; 4],
     light_dir: [f32; 4],
+    /// `[roughness, metallic, 0.0, 0.0]` — kept as its own vec4 rather than
+    /// repurposing `color`'s unused alpha channel, so `material.x`/`.y` read
+    /// clearly in the shader as separate PBR scalars, not a smuggled alpha.
+    material: [f32; 4],
+    /// World-space camera position (`.w` unused) — needed to build the view
+    /// vector the Cook-Torrance specular term reads, which a flat-Lambertian
+    /// shader never needed.
+    camera_pos: [f32; 4],
 }
 
 struct Drawable {
     transform: Transform,
     mesh: MeshKind,
     color: [f32; 3],
+    roughness: f32,
+    metallic: f32,
     texture: Option<String>,
     /// A content hash into the `SkinData` asset store, plus the same
     /// entity's `JointPalette` matrices (if any) — both must be present to
@@ -604,6 +614,7 @@ impl RenderContext {
         drawables: &[Drawable],
         texts: &[TextDrawable],
         view_proj: Mat4,
+        camera_pos: Vec3,
         color_view: &wgpu::TextureView,
         color_format: wgpu::TextureFormat,
         depth_view: &wgpu::TextureView,
@@ -657,6 +668,8 @@ impl RenderContext {
                     model: drawable.transform.to_matrix().to_cols_array_2d(),
                     color: [drawable.color[0], drawable.color[1], drawable.color[2], 1.0],
                     light_dir: [LIGHT_DIR.x, LIGHT_DIR.y, LIGHT_DIR.z, 0.0],
+                    material: [drawable.roughness, drawable.metallic, 0.0, 0.0],
+                    camera_pos: [camera_pos.x, camera_pos.y, camera_pos.z, 0.0],
                 };
                 let uniform_buffer =
                     self.core
@@ -923,7 +936,7 @@ fn extract_scene(
     world: &hecs::World,
     width: u32,
     height: u32,
-) -> Result<(Mat4, Vec<Drawable>, Vec<TextDrawable>), RenderError> {
+) -> Result<(Mat4, Vec3, Vec<Drawable>, Vec<TextDrawable>), RenderError> {
     let mut cameras: Vec<_> = world
         .query::<(&Transform, &Camera)>()
         .iter()
@@ -946,6 +959,8 @@ fn extract_scene(
                     transform: *t,
                     mesh: m.mesh.clone(),
                     color: mat.color,
+                    roughness: mat.roughness,
+                    metallic: mat.metallic,
                     texture: mat.texture.clone(),
                     skin: m.skin.clone(),
                     joint_matrices: palette.map(|p| p.matrices.clone()),
@@ -987,6 +1002,7 @@ fn extract_scene(
 
     Ok((
         view_proj,
+        camera_transform.position,
         drawables.into_iter().map(|(_, d)| d).collect(),
         texts.into_iter().map(|(_, t)| t).collect(),
     ))
@@ -1021,7 +1037,7 @@ pub fn render_scene_with_context(
     height: u32,
     assets_dir: &Path,
 ) -> Result<image::RgbaImage, RenderError> {
-    let (view_proj, drawables, texts) = extract_scene(world, width, height)?;
+    let (view_proj, camera_pos, drawables, texts) = extract_scene(world, width, height)?;
 
     let color_texture = ctx.core.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("weft-color-target"),
@@ -1051,6 +1067,7 @@ pub fn render_scene_with_context(
         &drawables,
         &texts,
         view_proj,
+        camera_pos,
         &color_view,
         COLOR_FORMAT,
         &depth_view,
@@ -1078,7 +1095,7 @@ pub(crate) fn draw_to_surface(
     height: u32,
     assets_dir: &Path,
 ) -> Result<wgpu::CommandBuffer, RenderError> {
-    let (view_proj, drawables, texts) = extract_scene(world, width, height)?;
+    let (view_proj, camera_pos, drawables, texts) = extract_scene(world, width, height)?;
     let depth_view = make_depth_view(&ctx.core.device, width, height);
     let mut encoder = ctx
         .core
@@ -1091,6 +1108,7 @@ pub(crate) fn draw_to_surface(
         &drawables,
         &texts,
         view_proj,
+        camera_pos,
         color_view,
         color_format,
         &depth_view,
