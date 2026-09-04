@@ -34,7 +34,6 @@ See [ADR-0018](../decisions/0018-physics-gameplay-substrate.md) for the full des
 - **A generic Lua-exposed shape-cast** — `engine.raycast` exists; a swept-shape query (as opposed to a point ray) does not.
 - **Scene-authorable character-controller tuning** — `KinematicCharacterController::default()`'s fixed tuning (no autostep, 45° slope limits) isn't exposed as scene fields yet; revisit when a ramp/staircase/moving-platform case needs it.
 - **A named collision-layer registry** — `Collider.membership`/`filter` are raw `u32` bitmasks, not named layers.
-- **A proper capsule mesh** — the sandbox player's visual is still a `sphere` mesh scaled into an ellipsoid approximating the capsule collider; `engine-render` has no dedicated capsule primitive. Purely cosmetic (the physics settles correctly), Tier 3 polish.
 
 ## Multi-mesh / multi-part asset import
 
