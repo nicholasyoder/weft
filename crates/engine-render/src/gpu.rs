@@ -6,7 +6,7 @@ use glam::{Mat4, Vec3};
 use lru::LruCache;
 use wgpu::util::DeviceExt;
 
-use crate::components::{Camera, Material, MeshKind, MeshRef, Text};
+use crate::components::{Camera, Light, LightKind, Material, MeshKind, MeshRef, Text};
 use crate::error::RenderError;
 use crate::mesh::{self, SkinnedVertex, Vertex};
 use crate::text::{self, GlyphAtlas};
@@ -22,8 +22,41 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// live assets, so eviction never triggers in tests.
 const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(256).unwrap();
 
-/// A hardcoded key light — simple-lit, not PBR, per Phase 2's scope.
+/// The fallback directional light synthesized when a scene has zero `Light`
+/// entities — matches the pre-Phase-4 hardcoded look exactly (see
+/// `extract_scene`), so no existing scene file needs updating.
 const LIGHT_DIR: Vec3 = Vec3::new(-0.4, -1.0, -0.3);
+
+/// Up to this many `Light` entities may exist in one scene — a small fixed
+/// cap comfortably inside the guaranteed 64 KiB uniform binding size, and
+/// no concrete scene needs more (see `visual-realism-plan.md` Phase 4).
+pub(crate) const MAX_LIGHTS: usize = 4;
+
+/// One light's GPU-side representation, laid out as three `vec4<f32>`s so
+/// `array<GpuLight, N>` in a WGSL uniform buffer satisfies naga's
+/// 16-byte-stride alignment rule automatically, with no manual padding.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuLight {
+    /// xyz: direction the light travels (directional) or world-space
+    /// position (point). w: 0.0 = directional, 1.0 = point — the shader
+    /// reads this tag to pick which falloff to apply.
+    pos_or_dir: [f32; 4],
+    /// rgb: light color. w: intensity multiplier.
+    color_intensity: [f32; 4],
+    /// x: point-light range (unused for directional). yzw: padding, kept
+    /// explicit so every field of this struct is a whole 16-byte-aligned
+    /// vec4.
+    range: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Lights {
+    lights: [GpuLight; MAX_LIGHTS],
+    count: u32,
+    _pad: [u32; 3],
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -31,7 +64,6 @@ struct Uniforms {
     view_proj: [[f32; 4]; 4],
     model: [[f32; 4]; 4],
     color: [f32; 4],
-    light_dir: [f32; 4],
     /// `[roughness, metallic, 0.0, 0.0]` — kept as its own vec4 rather than
     /// repurposing `color`'s unused alpha channel, so `material.x`/`.y` read
     /// clearly in the shader as separate PBR scalars, not a smuggled alpha.
@@ -251,6 +283,11 @@ pub struct RenderContext {
     ui_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     default_atlas: GlyphAtlas,
     font_cache: LruCache<String, GlyphAtlas>,
+    // Lights (Phase 4) — one shared bind group carrying every light in the
+    // scene, rebuilt once per `draw()` call (not per-drawable, the first
+    // genuinely per-frame-not-per-drawable buffer in this file). Shared by
+    // both the plain and skinned pipelines.
+    lights_bind_group_layout: wgpu::BindGroupLayout,
     core: GraphicsCore,
 }
 
@@ -463,9 +500,32 @@ impl RenderContext {
                 ],
             });
 
+        // Lights (Phase 4) — one uniform buffer entry, fragment-only (no
+        // vertex-stage light math). Shared by the plain and skinned
+        // pipelines; the skinned pipeline lands at exactly 4 bind groups
+        // with this added, wgpu's confirmed default `max_bind_groups`.
+        let lights_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("weft-lights-layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("weft-pipeline-layout"),
-            bind_group_layouts: &[Some(&bind_group_layout), Some(&texture_bind_group_layout)],
+            bind_group_layouts: &[
+                Some(&bind_group_layout),
+                Some(&texture_bind_group_layout),
+                Some(&lights_bind_group_layout),
+            ],
             immediate_size: 0,
         });
 
@@ -496,6 +556,7 @@ impl RenderContext {
                     Some(&bind_group_layout),
                     Some(&texture_bind_group_layout),
                     Some(&joint_bind_group_layout),
+                    Some(&lights_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -592,6 +653,7 @@ impl RenderContext {
             ui_pipelines: HashMap::new(),
             default_atlas,
             font_cache: LruCache::new(CACHE_CAPACITY),
+            lights_bind_group_layout,
         })
     }
 
@@ -693,6 +755,7 @@ impl RenderContext {
         texts: &[TextDrawable],
         view_proj: Mat4,
         camera_pos: Vec3,
+        lights: &Lights,
         color_view: &wgpu::TextureView,
         color_format: wgpu::TextureFormat,
         depth_view: &wgpu::TextureView,
@@ -704,6 +767,28 @@ impl RenderContext {
         let skinned_pipeline = self.skinned_pipeline_for(color_format);
         let ui_pipeline = self.ui_pipeline_for(color_format);
         let asset_store = engine_assets::AssetStore::new(assets_dir);
+
+        // Built once per frame, not per-drawable — see `lights_bind_group_layout`'s
+        // own doc comment. Pooling this buffer across frames is Phase 6's job.
+        let lights_buffer =
+            self.core
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("weft-lights-uniforms"),
+                    contents: bytemuck::bytes_of(lights),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let lights_bind_group = self
+            .core
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("weft-lights-bind-group"),
+                layout: &self.lights_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lights_buffer.as_entire_binding(),
+                }],
+            });
 
         let mut per_draw_state = Vec::with_capacity(drawables.len());
         let mut joint_buffers: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
@@ -745,7 +830,6 @@ impl RenderContext {
                     view_proj: view_proj.to_cols_array_2d(),
                     model: drawable.transform.to_matrix().to_cols_array_2d(),
                     color: [drawable.color[0], drawable.color[1], drawable.color[2], 1.0],
-                    light_dir: [LIGHT_DIR.x, LIGHT_DIR.y, LIGHT_DIR.z, 0.0],
                     material: [
                         drawable.roughness,
                         drawable.metallic,
@@ -863,6 +947,7 @@ impl RenderContext {
                     pass.set_bind_group(0, bind_group, &[]);
                     pass.set_bind_group(1, texture_bind_group, &[]);
                     pass.set_bind_group(2, joint_bind_group, &[]);
+                    pass.set_bind_group(3, &lights_bind_group, &[]);
                     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..*index_count, 0, 0..1);
@@ -904,6 +989,7 @@ impl RenderContext {
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, bind_group, &[]);
                 pass.set_bind_group(1, texture_bind_group, &[]);
+                pass.set_bind_group(2, &lights_bind_group, &[]);
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..index_count, 0, 0..1);
@@ -1034,11 +1120,16 @@ fn make_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Text
     depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+/// `(view_proj, camera_pos, drawables, texts, lights)` — factored into a
+/// named alias purely to keep clippy's `type_complexity` lint quiet; see
+/// `extract_scene`'s own callers for how each element is used.
+type ExtractedScene = (Mat4, Vec3, Vec<Drawable>, Vec<TextDrawable>, Lights);
+
 fn extract_scene(
     world: &hecs::World,
     width: u32,
     height: u32,
-) -> Result<(Mat4, Vec3, Vec<Drawable>, Vec<TextDrawable>), RenderError> {
+) -> Result<ExtractedScene, RenderError> {
     let mut cameras: Vec<_> = world
         .query::<(&Transform, &Camera)>()
         .iter()
@@ -1095,6 +1186,70 @@ fn extract_scene(
         .collect();
     texts.sort_by_key(|(e, _)| e.to_bits());
 
+    let mut scene_lights: Vec<_> = world
+        .query::<(&Transform, &Light)>()
+        .iter()
+        .map(|(e, (t, l))| (e, *t, *l))
+        .collect();
+    scene_lights.sort_by_key(|(e, _, _)| e.to_bits());
+    if scene_lights.len() > MAX_LIGHTS {
+        return Err(RenderError::TooManyLights(scene_lights.len()));
+    }
+
+    let mut gpu_lights = [GpuLight {
+        pos_or_dir: [0.0; 4],
+        color_intensity: [0.0; 4],
+        range: [0.0; 4],
+    }; MAX_LIGHTS];
+    let light_count = if scene_lights.is_empty() {
+        // No `Light` entity anywhere in the scene — synthesize one fallback
+        // directional light matching the pre-Phase-4 hardcoded look exactly,
+        // so no existing scene file needs a `Light` added to keep rendering.
+        gpu_lights[0] = GpuLight {
+            pos_or_dir: [LIGHT_DIR.x, LIGHT_DIR.y, LIGHT_DIR.z, 0.0],
+            color_intensity: [1.0, 1.0, 1.0, 0.85],
+            range: [0.0; 4],
+        };
+        1
+    } else {
+        let count = scene_lights.len();
+        for (i, (_, transform, light)) in scene_lights.into_iter().enumerate() {
+            gpu_lights[i] = match light.kind {
+                LightKind::Directional { direction } => GpuLight {
+                    pos_or_dir: [direction.x, direction.y, direction.z, 0.0],
+                    color_intensity: [
+                        light.color[0],
+                        light.color[1],
+                        light.color[2],
+                        light.intensity,
+                    ],
+                    range: [0.0; 4],
+                },
+                LightKind::Point { range } => GpuLight {
+                    pos_or_dir: [
+                        transform.position.x,
+                        transform.position.y,
+                        transform.position.z,
+                        1.0,
+                    ],
+                    color_intensity: [
+                        light.color[0],
+                        light.color[1],
+                        light.color[2],
+                        light.intensity,
+                    ],
+                    range: [range, 0.0, 0.0, 0.0],
+                },
+            };
+        }
+        count
+    };
+    let lights = Lights {
+        lights: gpu_lights,
+        count: light_count as u32,
+        _pad: [0; 3],
+    };
+
     let aspect = width as f32 / height as f32;
     let projection = glam::camera::rh::proj::directx::perspective(
         camera.fov_y_degrees.to_radians(),
@@ -1111,6 +1266,7 @@ fn extract_scene(
         camera_transform.position,
         drawables.into_iter().map(|(_, d)| d).collect(),
         texts.into_iter().map(|(_, t)| t).collect(),
+        lights,
     ))
 }
 
@@ -1143,7 +1299,7 @@ pub fn render_scene_with_context(
     height: u32,
     assets_dir: &Path,
 ) -> Result<image::RgbaImage, RenderError> {
-    let (view_proj, camera_pos, drawables, texts) = extract_scene(world, width, height)?;
+    let (view_proj, camera_pos, drawables, texts, lights) = extract_scene(world, width, height)?;
 
     let color_texture = ctx.core.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("weft-color-target"),
@@ -1174,6 +1330,7 @@ pub fn render_scene_with_context(
         &texts,
         view_proj,
         camera_pos,
+        &lights,
         &color_view,
         COLOR_FORMAT,
         &depth_view,
@@ -1201,7 +1358,7 @@ pub(crate) fn draw_to_surface(
     height: u32,
     assets_dir: &Path,
 ) -> Result<wgpu::CommandBuffer, RenderError> {
-    let (view_proj, camera_pos, drawables, texts) = extract_scene(world, width, height)?;
+    let (view_proj, camera_pos, drawables, texts, lights) = extract_scene(world, width, height)?;
     let depth_view = make_depth_view(&ctx.core.device, width, height);
     let mut encoder = ctx
         .core
@@ -1215,6 +1372,7 @@ pub(crate) fn draw_to_surface(
         &texts,
         view_proj,
         camera_pos,
+        &lights,
         color_view,
         color_format,
         &depth_view,
@@ -1593,5 +1751,89 @@ mod tests {
         let key_a = texture_cache_key(&base_color, &None, &None);
         let key_b = texture_cache_key(&base_color, &None, &None);
         assert_eq!(key_a, key_b);
+    }
+
+    fn camera_at(position: Vec3) -> (Transform, Camera) {
+        (
+            Transform::from_position(position),
+            Camera {
+                target: Vec3::ZERO,
+                fov_y_degrees: 45.0,
+                near: 0.1,
+                far: 100.0,
+            },
+        )
+    }
+
+    /// A scene with zero `Light` entities must keep rendering under the
+    /// exact pre-Phase-4 hardcoded look, not go dark — see `extract_scene`'s
+    /// own doc comment.
+    #[test]
+    fn zero_light_scene_falls_back_to_the_pre_phase_4_hardcoded_light() {
+        let mut world = hecs::World::new();
+        world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
+
+        let (_, _, _, _, lights) = extract_scene(&world, 16, 16).unwrap();
+        assert_eq!(lights.count, 1);
+        let light = lights.lights[0];
+        assert_eq!(
+            light.pos_or_dir,
+            [LIGHT_DIR.x, LIGHT_DIR.y, LIGHT_DIR.z, 0.0]
+        );
+        assert_eq!(light.color_intensity, [1.0, 1.0, 1.0, 0.85]);
+    }
+
+    /// More than `MAX_LIGHTS` `Light` entities in one scene is a structured
+    /// error, not silent truncation or a panic.
+    #[test]
+    fn more_than_max_lights_is_a_structured_error() {
+        let mut world = hecs::World::new();
+        world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
+        for _ in 0..(MAX_LIGHTS + 1) {
+            world.spawn((
+                Transform::default(),
+                Light {
+                    kind: LightKind::Point { range: 5.0 },
+                    color: [1.0, 1.0, 1.0],
+                    intensity: 1.0,
+                },
+            ));
+        }
+
+        let err = match extract_scene(&world, 16, 16) {
+            Err(e) => e,
+            Ok(_) => panic!("expected RenderError::TooManyLights"),
+        };
+        assert_eq!(err.code(), "RENDER_TOO_MANY_LIGHTS");
+    }
+
+    /// Lights must be collected in deterministic entity-id order (per
+    /// ADR-0002), matching cameras/drawables/texts' existing convention —
+    /// not hecs' unspecified query iteration order.
+    #[test]
+    fn lights_are_collected_in_deterministic_entity_order() {
+        let mut world = hecs::World::new();
+        world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
+        world.spawn((
+            Transform::default(),
+            Light {
+                kind: LightKind::Point { range: 1.0 },
+                color: [1.0, 0.0, 0.0],
+                intensity: 1.0,
+            },
+        ));
+        world.spawn((
+            Transform::default(),
+            Light {
+                kind: LightKind::Point { range: 2.0 },
+                color: [0.0, 1.0, 0.0],
+                intensity: 2.0,
+            },
+        ));
+
+        let (_, _, _, _, lights) = extract_scene(&world, 16, 16).unwrap();
+        assert_eq!(lights.count, 2);
+        assert_eq!(lights.lights[0].color_intensity, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(lights.lights[1].color_intensity, [0.0, 1.0, 0.0, 2.0]);
     }
 }

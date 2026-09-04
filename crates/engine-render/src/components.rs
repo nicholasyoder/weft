@@ -102,6 +102,35 @@ fn default_normal_scale() -> f32 {
     1.0
 }
 
+/// A light's shape. Directional lights carry an explicit `direction`
+/// rather than deriving one from `Transform.rotation` — mirrors
+/// `Camera.target`'s existing "explicit is easier to hand-author than a
+/// quaternion" reasoning; `Transform.rotation` stays unused on a
+/// directional light entity exactly as it already is on a camera. Point
+/// lights read their position from `Transform.position` instead. Spot
+/// lights are out of scope (see `visual-realism-plan.md` Phase 4 / ADR-0019)
+/// — no concrete consumer needs one yet.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LightKind {
+    Directional { direction: Vec3 },
+    Point { range: f32 },
+}
+
+/// A scene-authorable light (see `visual-realism-plan.md` Phase 4 /
+/// ADR-0019). Up to 4 may exist in a scene at once — a 5th is
+/// `RenderError::TooManyLights`. A scene with zero `Light` entities keeps
+/// rendering under a synthesized fallback directional light matching the
+/// engine's old hardcoded look, so no pre-existing scene file needs
+/// updating.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Light {
+    #[serde(flatten)]
+    pub kind: LightKind,
+    pub color: [f32; 3],
+    pub intensity: f32,
+}
+
 /// Screen-space HUD text — no `Transform`, since this is 2D UI, not a 3D
 /// billboard (world-space text is a possible future addition, not this
 /// one). `(x, y)` is the text block's top-left origin in pixels, `size` its
@@ -148,5 +177,28 @@ mod tests {
         assert_eq!(material.metallic_roughness_texture, None);
         assert_eq!(material.normal_texture, None);
         assert_eq!(material.normal_scale, 1.0);
+    }
+
+    #[test]
+    fn light_round_trips_through_json_for_both_kinds() {
+        let directional = Light {
+            kind: LightKind::Directional {
+                direction: Vec3::new(-0.4, -1.0, -0.3),
+            },
+            color: [1.0, 1.0, 1.0],
+            intensity: 1.0,
+        };
+        let json = serde_json::to_value(directional).unwrap();
+        let back: Light = serde_json::from_value(json).unwrap();
+        assert_eq!(back, directional);
+
+        let point = Light {
+            kind: LightKind::Point { range: 10.0 },
+            color: [1.0, 0.2, 0.2],
+            intensity: 2.0,
+        };
+        let json = serde_json::to_value(point).unwrap();
+        let back: Light = serde_json::from_value(json).unwrap();
+        assert_eq!(back, point);
     }
 }

@@ -7,7 +7,7 @@ mod window;
 
 use std::path::Path;
 
-pub use components::{Camera, Material, MeshKind, MeshRef, Text};
+pub use components::{Camera, Light, LightKind, Material, MeshKind, MeshRef, Text};
 pub use error::RenderError;
 pub use gpu::{render_scene, render_scene_with_context, RenderContext};
 pub use window::WindowRenderer;

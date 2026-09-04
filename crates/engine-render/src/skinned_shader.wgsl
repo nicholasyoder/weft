@@ -2,7 +2,6 @@ struct Uniforms {
     view_proj: mat4x4<f32>,
     model: mat4x4<f32>,
     color: vec4<f32>,
-    light_dir: vec4<f32>,
     material: vec4<f32>,
     camera_pos: vec4<f32>,
 };
@@ -24,6 +23,26 @@ var t_normal: texture_2d<f32>;
 
 @group(2) @binding(0)
 var<storage, read> joint_matrices: array<mat4x4<f32>>;
+
+const MAX_LIGHTS: u32 = 4u;
+
+// One light, GPU-side (Phase 4). `pos_or_dir.w`: 0.0 = directional (xyz is
+// the direction the light travels), 1.0 = point (xyz is world position).
+// `color_intensity.w` is an intensity multiplier. `range.x` is a point
+// light's falloff range (unused for directional).
+struct GpuLight {
+    pos_or_dir: vec4<f32>,
+    color_intensity: vec4<f32>,
+    range: vec4<f32>,
+};
+
+struct Lights {
+    lights: array<GpuLight, MAX_LIGHTS>,
+    count: u32,
+};
+
+@group(3) @binding(0)
+var<uniform> lights: Lights;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -154,10 +173,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n = normalize(tbn * scaled_normal);
 
     let v = normalize(u.camera_pos.xyz - in.world_position);
-    let l = normalize(-u.light_dir.xyz);
 
-    let direct = shade_light(n, v, l, base_color.rgb, roughness, metallic);
+    var direct = vec3<f32>(0.0);
+    for (var i = 0u; i < lights.count; i++) {
+        let light = lights.lights[i];
+        var l: vec3<f32>;
+        var attenuation = 1.0;
+        if light.pos_or_dir.w < 0.5 {
+            // Directional: `pos_or_dir.xyz` is the direction the light
+            // travels, so the direction *toward* the light is its negation.
+            l = normalize(-light.pos_or_dir.xyz);
+        } else {
+            let to_light = light.pos_or_dir.xyz - in.world_position;
+            let dist = max(length(to_light), 1e-4);
+            l = to_light / dist;
+            let range = max(light.range.x, 1e-4);
+            let falloff = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
+            attenuation = (falloff * falloff) / (dist * dist);
+        }
+        let contribution = shade_light(n, v, l, base_color.rgb, roughness, metallic);
+        direct += contribution * light.color_intensity.rgb * light.color_intensity.w * attenuation;
+    }
+
     let ambient = 0.15 * base_color.rgb;
-    let lit = ambient + direct * 0.85;
+    let lit = ambient + direct;
     return vec4<f32>(lit, 1.0);
 }

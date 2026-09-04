@@ -19,6 +19,8 @@ const PBR_TEXTURE_ASSETS_DIR: &str = "tests/fixtures/assets";
 const NORMAL_MAP_SCENE: &str = "tests/fixtures/scenes/render_normal_map.toml";
 const NORMAL_MAP_GOLDEN: &str = "tests/fixtures/scenes/render_normal_map.golden.png";
 const NORMAL_MAP_ASSETS_DIR: &str = "tests/fixtures/assets";
+const MULTI_LIGHT_SCENE: &str = "tests/fixtures/scenes/render_multi_light.toml";
+const MULTI_LIGHT_GOLDEN: &str = "tests/fixtures/scenes/render_multi_light.golden.png";
 
 /// Per-channel tolerance for the golden-image comparison. Not blind byte
 /// equality: `lavapipe`/Mesa version drift across machines can shift
@@ -248,6 +250,54 @@ fn render_of_a_skinned_animated_mesh_matches_golden_image_within_tolerance() {
         images_match_within_tolerance(&fresh, &golden),
         "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
     );
+}
+
+/// Two colored point lights plus a dim directional fill, visibly
+/// distinguishable — the concrete proof the multi-light shader loop
+/// actually runs through the real binary, not just `extract_scene`'s unit
+/// coverage (see Phase 4 / ADR-0019).
+#[test]
+fn render_of_a_multi_light_scene_matches_golden_image_within_tolerance() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            MULTI_LIGHT_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(MULTI_LIGHT_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
+#[test]
+fn rendering_a_scene_with_more_than_max_lights_is_a_structured_error() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            "tests/fixtures/scenes/render_too_many_lights.toml",
+            "--to",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("RENDER_TOO_MANY_LIGHTS"));
 }
 
 #[test]

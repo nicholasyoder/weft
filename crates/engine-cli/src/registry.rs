@@ -8,7 +8,7 @@ use engine_anim::{animation_step, Animator, JointPalette};
 use engine_audio::{audio_step, AudioSource, SoundsPlayed};
 use engine_core::Transform;
 use engine_physics::{physics_step, Collider, RigidBody};
-use engine_render::{Camera, Material, MeshRef, Text};
+use engine_render::{Camera, Light, Material, MeshRef, Text};
 use engine_scene::{ComponentRegistry, SystemRegistry};
 use engine_script::Script;
 
@@ -64,6 +64,9 @@ impl Named for Material {
 impl Named for Text {
     const NAME: &'static str = "Text";
 }
+impl Named for Light {
+    const NAME: &'static str = "Light";
+}
 impl Named for Script {
     const NAME: &'static str = "Script";
 }
@@ -105,6 +108,7 @@ pub fn components() -> ComponentRegistry {
     registry.register("MeshRef", load::<MeshRef>, dump::<MeshRef>);
     registry.register("Material", load::<Material>, dump::<Material>);
     registry.register("Text", load::<Text>, dump::<Text>);
+    registry.register("Light", load::<Light>, dump::<Light>);
     registry.register("Script", load::<Script>, dump::<Script>);
     registry.register("RigidBody", load::<RigidBody>, dump::<RigidBody>);
     registry.register("Collider", load::<Collider>, dump::<Collider>);

@@ -1,9 +1,13 @@
+use crate::gpu::MAX_LIGHTS;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
     #[error("scene has no Camera entity — add one (Transform + Camera components) to render it")]
     NoCamera,
     #[error("scene has {0} Camera entities — exactly one is required to render")]
     MultipleCameras(usize),
+    #[error("scene has {0} Light entities — at most {MAX_LIGHTS} are supported per scene")]
+    TooManyLights(usize),
     #[error("failed to find a compatible GPU adapter: {0}")]
     AdapterRequestFailed(String),
     #[error("failed to create a GPU device: {0}")]
@@ -39,6 +43,7 @@ impl RenderError {
         match self {
             Self::NoCamera => "RENDER_NO_CAMERA",
             Self::MultipleCameras(_) => "RENDER_MULTIPLE_CAMERAS",
+            Self::TooManyLights(_) => "RENDER_TOO_MANY_LIGHTS",
             Self::AdapterRequestFailed(_) => "RENDER_ADAPTER_ERROR",
             Self::DeviceRequestFailed(_) => "RENDER_DEVICE_ERROR",
             Self::ReadbackFailed(_) => "RENDER_READBACK_ERROR",
