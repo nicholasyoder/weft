@@ -38,6 +38,7 @@ fn cube_at(position: Vec3) -> (Transform, MeshRef, Material) {
             texture: None,
             roughness: 1.0,
             metallic: 0.0,
+            metallic_roughness_texture: None,
         },
     )
 }
@@ -192,6 +193,7 @@ fn rendering_an_imported_textured_mesh_produces_non_blank_output() {
             texture: imported.texture_hash,
             roughness: 1.0,
             metallic: 0.0,
+            metallic_roughness_texture: None,
         },
     ));
 
@@ -220,6 +222,7 @@ fn rendering_a_scene_with_an_unknown_asset_hash_is_a_structured_error() {
             texture: None,
             roughness: 1.0,
             metallic: 0.0,
+            metallic_roughness_texture: None,
         },
     ));
 

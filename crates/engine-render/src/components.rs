@@ -58,6 +58,11 @@ pub struct MeshRef {
 /// defaults to `1.0` (fully rough) and `metallic` to `0.0` (fully
 /// dielectric) so an unmodified pre-PBR scene file keeps looking as close
 /// to its old flat-Lambertian appearance as the BRDF change allows.
+///
+/// `metallic_roughness_texture` (Phase 2) optionally multiplies into those
+/// two scalars per-pixel — glTF's channel convention, honored here: green
+/// channel is roughness, blue is metallic (red and alpha unused, matching
+/// the glTF spec's `metallicRoughnessTexture`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     pub color: [f32; 3],
@@ -67,6 +72,8 @@ pub struct Material {
     pub roughness: f32,
     #[serde(default)]
     pub metallic: f32,
+    #[serde(default)]
+    pub metallic_roughness_texture: Option<String>,
 }
 
 fn default_roughness() -> f32 {
@@ -116,5 +123,6 @@ mod tests {
         assert_eq!(material.texture, None);
         assert_eq!(material.roughness, 1.0);
         assert_eq!(material.metallic, 0.0);
+        assert_eq!(material.metallic_roughness_texture, None);
     }
 }

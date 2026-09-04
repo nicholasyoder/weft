@@ -13,6 +13,9 @@ const TEXT_GOLDEN: &str = "tests/fixtures/scenes/render_text.golden.png";
 const ANIMATION_SCENE: &str = "tests/fixtures/scenes/animation_demo.toml";
 const ANIMATION_GOLDEN: &str = "tests/fixtures/scenes/render_animation.golden.png";
 const ANIMATION_ASSETS_DIR: &str = "tests/fixtures/assets";
+const PBR_TEXTURE_SCENE: &str = "tests/fixtures/scenes/render_pbr_texture.toml";
+const PBR_TEXTURE_GOLDEN: &str = "tests/fixtures/scenes/render_pbr_texture.golden.png";
+const PBR_TEXTURE_ASSETS_DIR: &str = "tests/fixtures/assets";
 
 /// Per-channel tolerance for the golden-image comparison. Not blind byte
 /// equality: `lavapipe`/Mesa version drift across machines can shift
@@ -155,6 +158,35 @@ fn render_of_text_over_a_3d_scene_matches_golden_image_within_tolerance() {
 /// `crates/engine-cli/tests/animation.rs` for the matching numeric
 /// `JointPalette` assertion this golden image is the rendered counterpart
 /// of.
+#[test]
+fn render_of_a_metallic_roughness_textured_mesh_matches_golden_image_within_tolerance() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            PBR_TEXTURE_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--assets-dir",
+            PBR_TEXTURE_ASSETS_DIR,
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(PBR_TEXTURE_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
 #[test]
 fn render_of_a_skinned_animated_mesh_matches_golden_image_within_tolerance() {
     let out = scratch_png();

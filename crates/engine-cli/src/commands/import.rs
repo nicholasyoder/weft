@@ -58,6 +58,13 @@ pub(crate) fn gltf_fragment(imported: &engine_assets::ImportedAsset) -> String {
     if let Some(texture_hash) = &imported.texture_hash {
         fragment.push_str(&format!("texture = \"{texture_hash}\"\n"));
     }
+    fragment.push_str(&format!(
+        "roughness = {:.6}\nmetallic = {:.6}\n",
+        imported.roughness_factor, imported.metallic_factor
+    ));
+    if let Some(mr_hash) = &imported.metallic_roughness_texture_hash {
+        fragment.push_str(&format!("metallic_roughness_texture = \"{mr_hash}\"\n"));
+    }
     if let (Some(skeleton_hash), Some(clip_hash)) = (&imported.skeleton_hash, &imported.clip_hash) {
         fragment.push_str(&format!(
             "\n[entity.components.Animator]\nskeleton = \"{skeleton_hash}\"\nclip = \"{clip_hash}\"\n"

@@ -20,6 +20,9 @@ pub struct ImportedAsset {
     pub mesh_hash: String,
     pub base_color: [f32; 3],
     pub texture_hash: Option<String>,
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub metallic_roughness_texture_hash: Option<String>,
     pub skin_hash: Option<String>,
     pub skeleton_hash: Option<String>,
     pub clip_hash: Option<String>,
@@ -147,6 +150,16 @@ pub fn import_gltf(path: &Path, store: &AssetStore) -> Result<ImportedAsset, Ass
         None => None,
     };
 
+    let metallic_factor = pbr.metallic_factor();
+    let roughness_factor = pbr.roughness_factor();
+    let metallic_roughness_texture_hash = match pbr.metallic_roughness_texture() {
+        Some(info) => {
+            let image_data = &images[info.texture().source().index()];
+            Some(store_embedded_image(image_data, &label, store)?)
+        }
+        None => None,
+    };
+
     let (skin_hash, skeleton_hash, clip_hash) = match skin {
         Some(skin) => {
             let joints: Vec<[u16; 4]> = reader
@@ -208,6 +221,9 @@ pub fn import_gltf(path: &Path, store: &AssetStore) -> Result<ImportedAsset, Ass
         mesh_hash,
         base_color,
         texture_hash,
+        metallic_factor,
+        roughness_factor,
+        metallic_roughness_texture_hash,
         skin_hash,
         skeleton_hash,
         clip_hash,

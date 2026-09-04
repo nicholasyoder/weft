@@ -14,6 +14,10 @@ var<uniform> u: Uniforms;
 var t_color: texture_2d<f32>;
 @group(1) @binding(1)
 var s_color: sampler;
+// Metallic-roughness texture (Phase 2) — glTF's own channel convention:
+// green is roughness, blue is metallic. Reuses `s_color`, same as t_color.
+@group(1) @binding(2)
+var t_mr: texture_2d<f32>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -99,8 +103,9 @@ fn shade_light(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base_color = textureSample(t_color, s_color, in.uv) * u.color;
-    let roughness = clamp(u.material.x, 0.045, 1.0);
-    let metallic = clamp(u.material.y, 0.0, 1.0);
+    let mr = textureSample(t_mr, s_color, in.uv);
+    let roughness = clamp(u.material.x * mr.g, 0.045, 1.0);
+    let metallic = clamp(u.material.y * mr.b, 0.0, 1.0);
 
     let n = normalize(in.world_normal);
     let v = normalize(u.camera_pos.xyz - in.world_position);

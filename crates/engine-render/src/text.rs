@@ -206,6 +206,16 @@ impl GlyphAtlas {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(sampler),
                 },
+                // Binding 2 (Phase 2's metallic-roughness slot) is unused
+                // by the UI pass — `texture_bind_group_layout` is shared
+                // with the 3D pass, so a bind group built against it still
+                // needs an entry satisfying every layout binding. Reusing
+                // the glyph atlas view itself is harmless: `ui_shader.wgsl`
+                // never declares or reads this binding.
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
             ],
         });
 

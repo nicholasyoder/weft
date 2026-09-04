@@ -93,6 +93,26 @@ fn importing_a_textured_gltf_produces_a_texture_hash_and_stores_a_png() {
 }
 
 #[test]
+fn importing_a_gltf_with_a_metallic_roughness_texture_stores_it_distinctly_from_base_color() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let imported = import_gltf(&fixture("box_textured_mr.gltf"), &store).unwrap();
+    let base_color_hash = imported
+        .texture_hash
+        .expect("expected a base color texture");
+    let mr_hash = imported
+        .metallic_roughness_texture_hash
+        .expect("expected a metallic-roughness texture");
+    assert_ne!(base_color_hash, mr_hash);
+    assert_eq!(imported.metallic_factor, 1.0);
+    assert_eq!(imported.roughness_factor, 1.0);
+    let bytes = store.get(&mr_hash).unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert!(decoded.width() > 0 && decoded.height() > 0);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn multi_primitive_gltf_is_a_structured_error() {
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);

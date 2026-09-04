@@ -49,6 +49,11 @@ struct Drawable {
     roughness: f32,
     metallic: f32,
     texture: Option<String>,
+    /// Content hash of a texture whose G channel modulates `roughness` and
+    /// B channel modulates `metallic` per-pixel (glTF's own channel
+    /// convention for `metallicRoughnessTexture`) — see Phase 2 /
+    /// ADR-0019. `None` renders identically to Phase 1 (scalars only).
+    metallic_roughness_texture: Option<String>,
     /// A content hash into the `SkinData` asset store, plus the same
     /// entity's `JointPalette` matrices (if any) — both must be present to
     /// actually draw skinned; see `draw()`'s `use_skinned` check for why a
@@ -192,12 +197,20 @@ pub struct RenderContext {
     pipeline_layout: wgpu::PipelineLayout,
     pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     sampler: wgpu::Sampler,
+    // Shared 1x1 white view — the "no texture here" default for *any* of
+    // the texture bind group's slots (base color, and since Phase 2,
+    // metallic-roughness too): white is simultaneously a no-op color tint
+    // and a no-op rough/metal multiplier, so one texture covers both.
+    white_view: wgpu::TextureView,
     white_bind_group: wgpu::BindGroup,
     cube_buffers: MeshBuffers,
     plane_buffers: MeshBuffers,
     sphere_buffers: MeshBuffers,
     mesh_cache: LruCache<String, MeshBuffers>,
-    texture_cache: LruCache<String, wgpu::BindGroup>,
+    // Keyed by (base_color_hash, metallic_roughness_hash) — Phase 2 lets a
+    // material reference two independent textures, so either hash alone no
+    // longer uniquely identifies the bind group a drawable needs.
+    texture_cache: LruCache<(String, Option<String>), wgpu::BindGroup>,
     // Skinned mesh pass — a second shader/pipeline (opaque, same depth
     // settings as the 3D pipeline; not alpha-blended like the UI pass
     // below) with a third bind group carrying a per-draw joint-matrix
@@ -388,6 +401,21 @@ impl RenderContext {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    // Metallic-roughness texture (Phase 2) — reuses the
+                    // same sampler at binding 1, glTF's own base-color and
+                    // metallic-roughness textures are required to be
+                    // sampler-compatible, and this engine already has
+                    // exactly one shared sampler.
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -444,12 +472,14 @@ impl RenderContext {
         });
         // Untextured drawables sample a shared 1x1 white texture rather than
         // branching in the shader — white * color reproduces the flat-color
-        // look exactly, so one shader code path covers both cases.
+        // look exactly, and white as a rough/metal multiplier is likewise a
+        // no-op, so one shader code path covers both cases.
+        let white_view = upload_white_texture_view(device, &core.queue);
         let white_bind_group = create_white_texture_bind_group(
             device,
-            &core.queue,
             &texture_bind_group_layout,
             &sampler,
+            &white_view,
         );
 
         let ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -497,6 +527,7 @@ impl RenderContext {
             pipeline_layout,
             pipelines: HashMap::new(),
             sampler,
+            white_view,
             white_bind_group,
             cube_buffers,
             plane_buffers,
@@ -692,23 +723,27 @@ impl RenderContext {
                     });
                 per_draw_state.push((uniform_buffer, bind_group));
 
-                let texture_bind_group = match &drawable.texture {
-                    Some(hash) => {
-                        if !self.texture_cache.contains(hash) {
-                            let bind_group = load_texture_bind_group(
-                                hash,
-                                &self.core.device,
-                                &self.core.queue,
-                                &asset_store,
-                                &self.texture_bind_group_layout,
-                                &self.sampler,
-                            )?;
-                            self.texture_cache.put(hash.clone(), bind_group);
+                let texture_bind_group =
+                    match (&drawable.texture, &drawable.metallic_roughness_texture) {
+                        (None, None) => &self.white_bind_group,
+                        (base_color, metallic_roughness) => {
+                            let key = texture_cache_key(base_color, metallic_roughness);
+                            if !self.texture_cache.contains(&key) {
+                                let bind_group = load_texture_bind_group(
+                                    base_color.as_deref(),
+                                    metallic_roughness.as_deref(),
+                                    &self.core.device,
+                                    &self.core.queue,
+                                    &asset_store,
+                                    &self.texture_bind_group_layout,
+                                    &self.sampler,
+                                    &self.white_view,
+                                )?;
+                                self.texture_cache.put(key.clone(), bind_group);
+                            }
+                            self.texture_cache.get(&key).unwrap()
                         }
-                        self.texture_cache.get(hash).unwrap()
-                    }
-                    None => &self.white_bind_group,
-                };
+                    };
 
                 let (_, bind_group) = per_draw_state.last().unwrap();
 
@@ -962,6 +997,7 @@ fn extract_scene(
                     roughness: mat.roughness,
                     metallic: mat.metallic,
                     texture: mat.texture.clone(),
+                    metallic_roughness_texture: mat.metallic_roughness_texture.clone(),
                     skin: m.skin.clone(),
                     joint_matrices: palette.map(|p| p.matrices.clone()),
                 },
@@ -1172,10 +1208,32 @@ fn load_skinned_mesh_buffers(
     Ok(upload_skinned_mesh(device, &skinned_mesh))
 }
 
+/// The `texture_cache` key for a drawable's texture pair — `unwrap_or_default`
+/// on the base-color slot is safe here since this is only ever called when
+/// at least one of the two is `Some` (the `(None, None)` case bypasses the
+/// cache entirely, using `white_bind_group` directly).
+fn texture_cache_key(
+    base_color: &Option<String>,
+    metallic_roughness: &Option<String>,
+) -> (String, Option<String>) {
+    (
+        base_color.clone().unwrap_or_default(),
+        metallic_roughness.clone(),
+    )
+}
+
+/// `format` matters: base-color textures are authored/stored as sRGB (so
+/// sampling must gamma-decode them), but the metallic-roughness texture's
+/// G/B channels are raw linear scalars per the glTF spec — sampling those
+/// through an sRGB view would silently skew every roughness/metallic value.
+/// Both cases share this one upload path via the `format` parameter rather
+/// than duplicating it, since the write-texture/view-creation logic is
+/// otherwise identical.
 fn upload_rgba_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     rgba: &image::RgbaImage,
+    format: wgpu::TextureFormat,
 ) -> wgpu::TextureView {
     let (width, height) = rgba.dimensions();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1188,7 +1246,7 @@ fn upload_rgba_texture(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -1214,38 +1272,53 @@ fn upload_rgba_texture(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+/// A 1x1 white view — simultaneously a no-op color tint and a no-op
+/// rough/metal multiplier, so it serves as the shared default for every
+/// slot in `texture_bind_group_layout`. Uploaded once and retained on
+/// `RenderContext` (see its `white_view` field) rather than rebuilt per
+/// bind group.
+fn upload_white_texture_view(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+    let white = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+    upload_rgba_texture(device, queue, &white, wgpu::TextureFormat::Rgba8UnormSrgb)
+}
+
 fn create_white_texture_bind_group(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
+    white_view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
-    let white = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
-    let view = upload_rgba_texture(device, queue, &white);
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("weft-white-texture-bind-group"),
         layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+                resource: wgpu::BindingResource::TextureView(white_view),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(white_view),
+            },
         ],
     })
 }
 
-fn load_texture_bind_group(
+/// Loads and uploads one imported texture asset by content hash. `srgb`
+/// selects the color space (`true` for base color, `false` for the
+/// metallic-roughness texture's linear channel data — see
+/// `upload_rgba_texture`'s doc comment).
+fn load_rgba_view(
     hash: &str,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     store: &engine_assets::AssetStore,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-) -> Result<wgpu::BindGroup, RenderError> {
+    srgb: bool,
+) -> Result<wgpu::TextureView, RenderError> {
     let bytes = store.get(hash)?;
     let decoded = image::load_from_memory(&bytes).map_err(|source| {
         RenderError::AssetLoadFailed(engine_assets::AssetError::ImageDecodeFailed {
@@ -1253,18 +1326,53 @@ fn load_texture_bind_group(
             source,
         })
     })?;
-    let view = upload_rgba_texture(device, queue, &decoded.to_rgba8());
+    let format = if srgb {
+        wgpu::TextureFormat::Rgba8UnormSrgb
+    } else {
+        wgpu::TextureFormat::Rgba8Unorm
+    };
+    Ok(upload_rgba_texture(
+        device,
+        queue,
+        &decoded.to_rgba8(),
+        format,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_texture_bind_group(
+    base_color_hash: Option<&str>,
+    metallic_roughness_hash: Option<&str>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    store: &engine_assets::AssetStore,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    white_view: &wgpu::TextureView,
+) -> Result<wgpu::BindGroup, RenderError> {
+    let color_view = match base_color_hash {
+        Some(hash) => load_rgba_view(hash, device, queue, store, true)?,
+        None => white_view.clone(),
+    };
+    let mr_view = match metallic_roughness_hash {
+        Some(hash) => load_rgba_view(hash, device, queue, store, false)?,
+        None => white_view.clone(),
+    };
     Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("weft-imported-texture-bind-group"),
         layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+                resource: wgpu::BindingResource::TextureView(&color_view),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&mr_view),
             },
         ],
     }))
@@ -1340,4 +1448,32 @@ fn read_back(
 
     image::RgbaImage::from_raw(width, height, pixels)
         .ok_or_else(|| RenderError::ReadbackFailed("pixel buffer size mismatch".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two materials sharing a base-color hash but differing
+    /// metallic-roughness hashes must produce distinct `texture_cache`
+    /// keys — otherwise the second material's draw would silently reuse
+    /// the first's bind group and render with the wrong metallic-roughness
+    /// texture (see Phase 2 / ADR-0019).
+    #[test]
+    fn texture_cache_key_distinguishes_by_metallic_roughness_hash_too() {
+        let base_color = Some("base-color-hash".to_string());
+        let key_a = texture_cache_key(&base_color, &Some("mr-hash-a".to_string()));
+        let key_b = texture_cache_key(&base_color, &Some("mr-hash-b".to_string()));
+        assert_ne!(key_a, key_b);
+    }
+
+    /// Same base-color hash, no metallic-roughness texture on either side
+    /// — must key identically so the cache actually hits.
+    #[test]
+    fn texture_cache_key_matches_when_both_hashes_match() {
+        let base_color = Some("base-color-hash".to_string());
+        let key_a = texture_cache_key(&base_color, &None);
+        let key_b = texture_cache_key(&base_color, &None);
+        assert_eq!(key_a, key_b);
+    }
 }
