@@ -13,6 +13,8 @@ use engine_core::KeyCode;
 use engine_physics::PhysicsState;
 use serde::{Deserialize, Serialize};
 
+use crate::camera_follow::CameraFollow;
+
 /// Marks an entity as reading live keyboard input and moving via
 /// `PhysicsState::move_character`. `speed`/`jump_speed` are per-second
 /// tuning knobs, scene-authored like any other component field;
@@ -61,39 +63,66 @@ impl engine_cli::registry::Named for CharacterVelocity {
     const NAME: &'static str = "CharacterVelocity";
 }
 
-/// Reads `Input` from `Resources`, computes a WASD horizontal direction plus
-/// this tick's vertical speed (gravity accumulation, a jump impulse on
-/// Space while grounded), and moves every `PlayerControl`-tagged entity via
-/// `PhysicsState::move_character` — wall sliding, step handling, and ground
-/// snapping all come from rapier's own character controller (Phase 4). Must
-/// be registered *before* "physics" in scene order: `move_character` stages
-/// a `set_next_kinematic_translation` call that "physics" consumes when it
-/// steps the world.
+/// Reads `Input` from `Resources`, computes a camera-relative WASD
+/// horizontal direction plus this tick's vertical speed (gravity
+/// accumulation, a jump impulse on Space while grounded), and moves every
+/// `PlayerControl`-tagged entity via `PhysicsState::move_character` — wall
+/// sliding, step handling, and ground snapping all come from rapier's own
+/// character controller (Phase 4). When actually moving, also turns the
+/// entity to face its movement direction via
+/// `PhysicsState::set_character_rotation` — driven through the physics
+/// body's own kinematic rotation target, since `physics_step`'s pose
+/// write-back would otherwise silently clobber a direct `Transform.rotation`
+/// write every tick (see `set_character_rotation`'s own doc comment). Must
+/// be registered *before* "physics" in scene order: `move_character`/
+/// `set_character_rotation` both stage pending kinematic targets that
+/// "physics" consumes when it steps the world. Must also be registered
+/// *after* "camera_look", so the camera-relative direction below uses this
+/// tick's freshly-updated yaw, not last tick's.
 pub fn player_control_system(args: &mut SystemArgs) -> Result<(), SystemError> {
     let dt = args.dt;
 
+    // The lowest-entity-id `CameraFollow` entity's yaw (0.0, i.e. today's
+    // fixed world-axis behavior, if no camera exists) — same
+    // query-the-other-component-sort-by-id convention `camera_follow_system`
+    // already uses in the opposite direction.
+    let mut camera_yaws: Vec<_> = args
+        .world
+        .query::<&CameraFollow>()
+        .iter()
+        .map(|(entity, follow)| (entity, follow.yaw))
+        .collect();
+    camera_yaws.sort_by_key(|(entity, _)| entity.to_bits());
+    let camera_yaw = camera_yaws.into_iter().next().map_or(0.0, |(_, yaw)| yaw);
+    let camera_rotation = glam::Quat::from_rotation_y(camera_yaw);
+
     let (dir, jump_held) = match args.resources.get::<engine_core::Input>() {
         Some(input) => {
-            let mut dir = glam::Vec3::ZERO;
+            let mut local_dir = glam::Vec3::ZERO;
             if input.is_held(KeyCode::W) {
-                dir += glam::Vec3::NEG_Z;
+                local_dir += glam::Vec3::NEG_Z;
             }
             if input.is_held(KeyCode::S) {
-                dir += glam::Vec3::Z;
+                local_dir += glam::Vec3::Z;
             }
             if input.is_held(KeyCode::A) {
-                dir += glam::Vec3::NEG_X;
+                local_dir += glam::Vec3::NEG_X;
             }
             if input.is_held(KeyCode::D) {
-                dir += glam::Vec3::X;
+                local_dir += glam::Vec3::X;
             }
             (
-                dir.try_normalize().unwrap_or(glam::Vec3::ZERO),
+                (camera_rotation * local_dir)
+                    .try_normalize()
+                    .unwrap_or(glam::Vec3::ZERO),
                 input.is_held(KeyCode::Space),
             )
         }
         None => (glam::Vec3::ZERO, false),
     };
+    // Solved so `Quat::from_rotation_y(facing_yaw) * Vec3::NEG_Z == dir`.
+    let facing =
+        (dir != glam::Vec3::ZERO).then(|| glam::Quat::from_rotation_y((-dir.x).atan2(-dir.z)));
 
     // Stable iteration order, per ADR-0002 — hecs makes no order guarantee
     // of its own.
@@ -122,6 +151,9 @@ pub fn player_control_system(args: &mut SystemArgs) -> Result<(), SystemError> {
                 if result.grounded && vertical < 0.0 {
                     vertical = 0.0;
                 }
+            }
+            if let Some(facing) = facing {
+                state.set_character_rotation(entity, facing);
             }
             updates.push((entity, vertical));
         }

@@ -5,7 +5,8 @@ pub mod scheduler;
 pub mod sim;
 
 pub use engine_types::{
-    AssetsDir, AudioSettings, Input, JointPalette, KeyCode, SoundEvent, SoundEventQueue, Transform,
+    AssetsDir, AudioSettings, Input, JointPalette, KeyCode, MouseDelta, SoundEvent,
+    SoundEventQueue, Transform,
 };
 pub use hecs;
 pub use resources::Resources;

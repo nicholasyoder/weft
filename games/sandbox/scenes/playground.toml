@@ -1,8 +1,10 @@
-# The first Weft-built game: a physics playground. WASD moves a capsule
-# player (a real kinematic character controller, see
+# The first Weft-built game: a physics playground. WASD moves a humanoid
+# capsule player (a real kinematic character controller, see
 # games/sandbox/src/player_control.rs, physics-substrate-plan.md Phase 7 —
-# Space jumps) around a walled arena with a fixed obstacle pillar. See
-# ADR-0010 and ROADMAP.md Phase 8. Three gold pickups are scripted
+# Space jumps), camera-relative to a mouse-look third-person orbit camera
+# (games/sandbox/src/camera_look.rs + camera_follow.rs) around a walled
+# arena with a fixed obstacle pillar. See ADR-0010 and ROADMAP.md Phase 8.
+# Three gold pickups are scripted
 # (games/sandbox/scripts/pickup.lua, see ADR-0013 and Phase 6): walk up to
 # one (a real rapier sensor overlap) and hold E to collect it — the first
 # content actually using Weft's scripting API in a real, live-playable game
@@ -14,12 +16,16 @@
 # games/sandbox/src/moving_platform.rs, physics-substrate-plan.md Phase 5) —
 # the first live proof of a KinematicPositionBased body outside a unit test.
 #
-# System order matters: "player_control" and "moving_platform" must both run
-# before "physics" — they each stage a pending change (a kinematic target,
-# via PhysicsState::move_character/set_kinematic_translation) on a rigid
-# body that "physics" consumes when it steps the world. "camera_follow"
-# must run after "physics" so it reads the player's post-physics position for
-# this tick, not last tick's. Script dispatch (the pickups) is automatic —
+# System order matters: "camera_look" (mouse-look, updates the camera's
+# yaw/pitch from this tick's mouse motion) must run before "player_control",
+# so camera-relative WASD movement uses this tick's fresh yaw, not last
+# tick's. "player_control" and "moving_platform" must both run before
+# "physics" — they each stage a pending change (a kinematic target, via
+# PhysicsState::move_character/set_character_rotation/
+# set_kinematic_translation) on a rigid body that "physics" consumes when it
+# steps the world. "camera_follow" (camera placement) must run after
+# "physics" so it reads the player's post-physics position for this tick,
+# not last tick's. Script dispatch (the pickups) is automatic —
 # any scene with a Script component gets one, no [[system]] entry needed.
 # "hud" runs last so it counts each tick's despawns with the least possible
 # lag (still one tick behind script dispatch, which itself runs after every
@@ -230,7 +236,6 @@ function = "on_tick"
 name = "player"
 [entity.components.Transform]
 position = [0.0, 2.0, 4.0]
-scale = [0.3, 0.8, 0.3]
 # physics-substrate-plan.md Phase 7: a real kinematic character controller
 # (PhysicsState::move_character) replaces the original force-driven rolling
 # sphere — wall sliding, step handling, and ground snapping now come from
@@ -240,8 +245,12 @@ scale = [0.3, 0.8, 0.3]
 body_type = "kinematic_position_based"
 [entity.components.Collider]
 shape = { kind = "capsule", half_height = 0.5, radius = 0.3 }
+# A real imported humanoid mesh (tools/asset-gen/generate_humanoid.py),
+# authored in world units matching the capsule collider above — no scale
+# hack needed, unlike the old sphere-squashed-into-an-ellipsoid
+# approximation this replaced.
 [entity.components.MeshRef]
-mesh = "sphere"
+mesh = { asset = "7347c6731c38c3a91d8d9ff037e498ddb614e900b8ca1cf3a106a98fcc257baa" }
 [entity.components.Material]
 color = [0.85, 0.2, 0.2]
 [entity.components.PlayerControl]
@@ -254,7 +263,10 @@ position = [0.0, 9.0, 12.0]
 [entity.components.Camera]
 target = [0.0, 0.5, 0.0]
 [entity.components.CameraFollow]
-offset = [0.0, 6.0, 8.0]
+# All fields left at their defaults, which reproduce the original fixed
+# [0, 6, 8] offset as an orbit (yaw=0, pitch=atan2(6,8), distance=10) —
+# see CameraFollow's own field doc comments. Mouse motion (engine play's
+# live loop only) updates yaw/pitch from here via "camera_look".
 
 [[entity]]
 name = "rig"
@@ -293,6 +305,8 @@ size = 20.0
 color = [1.0, 0.95, 0.4]
 font = "034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d"
 
+[[system]]
+name = "camera_look"
 [[system]]
 name = "player_control"
 [[system]]

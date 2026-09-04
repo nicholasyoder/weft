@@ -95,6 +95,26 @@ impl PhysicsState {
             .set_next_kinematic_translation(next_translation);
         Some(move_result)
     }
+
+    /// Drives `entity`'s kinematic body toward `rotation` via rapier's own
+    /// `set_next_kinematic_rotation` — rapier interpolates smoothly toward
+    /// it, the same as `set_next_kinematic_translation` already does for
+    /// movement. This is the only correct way to change a physics-driven
+    /// entity's facing: `physics_step`'s pose write-back
+    /// (`transform.rotation = *body.rotation()`) runs unconditionally for
+    /// every non-fixed body every tick, so writing `Transform.rotation`
+    /// directly from game code would be silently overwritten the very
+    /// same tick. Silent no-op if `entity` has no registered body yet,
+    /// matching `move_character`/`apply_force`'s convention.
+    pub fn set_character_rotation(&mut self, entity: hecs::Entity, rotation: glam::Quat) {
+        let Some(&body_handle) = self.bodies.get(&entity) else {
+            return;
+        };
+        let Some(body) = self.world.bodies.get_mut(body_handle) else {
+            return;
+        };
+        body.set_next_kinematic_rotation(rotation);
+    }
 }
 
 #[cfg(test)]
@@ -218,5 +238,43 @@ mod tests {
             result.is_none(),
             "expected move_character to no-op before physics_step registers the entity"
         );
+    }
+
+    #[test]
+    fn set_character_rotation_drives_the_body_toward_the_target_rotation() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut()
+            .add_system("physics", crate::system::physics_step);
+
+        let character = spawn_character(&mut sim, Vec3::new(0.0, 5.0, 0.0));
+        sim.step().unwrap(); // registers the body
+
+        let target = glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        sim.resources
+            .get_mut::<PhysicsState>()
+            .unwrap()
+            .set_character_rotation(character, target);
+
+        // A kinematic body's next-frame rotation target is only actually
+        // applied to its pose once `physics_step` runs again.
+        sim.step().unwrap();
+
+        let transform = sim.world.get::<&Transform>(character).unwrap();
+        let facing = transform.rotation * Vec3::NEG_Z;
+        let expected_facing = target * Vec3::NEG_Z;
+        assert!(
+            facing.dot(expected_facing) > 0.99,
+            "expected the body's rotation to have reached the commanded target, got facing={facing:?}, expected={expected_facing:?}"
+        );
+    }
+
+    #[test]
+    fn set_character_rotation_on_an_unregistered_entity_is_a_silent_noop() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        let character = sim.world.spawn((Transform::from_position(Vec3::ZERO),));
+
+        let mut state = PhysicsState::default();
+        // Should not panic even though `character` has no registered body.
+        state.set_character_rotation(character, glam::Quat::IDENTITY);
     }
 }

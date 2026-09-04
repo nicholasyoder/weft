@@ -1,4 +1,5 @@
 pub mod camera_follow;
+pub mod camera_look;
 pub mod hud;
 pub mod moving_platform;
 pub mod player_control;
@@ -40,6 +41,7 @@ pub fn registry() -> (
     );
 
     let mut systems = engine_cli::registry::systems();
+    systems.register("camera_look", camera_look::camera_look_system);
     systems.register("player_control", player_control::player_control_system);
     systems.register("camera_follow", camera_follow::camera_follow_system);
     systems.register("hud", hud::hud_system);

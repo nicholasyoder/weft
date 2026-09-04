@@ -14,15 +14,15 @@ use std::time::Instant;
 
 use engine_core::inspect::ComponentDumper;
 use engine_core::sim::Sim;
-use engine_core::{Input, KeyCode};
+use engine_core::{Input, KeyCode, MouseDelta};
 use engine_render::WindowRenderer;
 use engine_scene::{ComponentRegistry, SystemRegistry};
 use engine_script::ScriptHost;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode as WinitKeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::diagnostics::CliError;
 
@@ -60,6 +60,7 @@ pub fn play(
         window: None,
         renderer: None,
         input: Input::default(),
+        mouse_delta: MouseDelta::default(),
         accumulator: 0.0,
         last_instant: None,
         max_ticks,
@@ -138,6 +139,11 @@ struct App<'a> {
     window: Option<Arc<Window>>,
     renderer: Option<WindowRenderer>,
     input: Input,
+    /// Raw mouse motion accumulated since the last frame snapshot was
+    /// inserted into `Resources` — reset to zero right after each insert
+    /// (see `about_to_wait`), mirroring `input`'s "one snapshot per
+    /// rendered frame" cadence rather than per-tick.
+    mouse_delta: MouseDelta,
     /// Wall-clock seconds accumulated but not yet consumed by a fixed
     /// `sim.dt`-sized `Sim::step()` — the standard fixed-timestep
     /// accumulator pattern, which keeps the simulation's own determinism
@@ -233,8 +239,37 @@ impl ApplicationHandler for App<'_> {
             }
         }
 
+        // Grab + hide the cursor for mouse-look: `Locked` (no cursor
+        // movement at all, just raw deltas) is preferred, but X11 only
+        // supports `Confined` (cursor stays on-screen but does move) —
+        // verified against winit 0.30.13's own X11 backend, which
+        // hard-errors `Locked` as unsupported. Neither is fatal if it
+        // fails (e.g. an unusual platform/compositor) — same "log and
+        // keep going" posture as a missing audio device below.
+        if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
+            if let Err(e) = window.set_cursor_grab(CursorGrabMode::Confined) {
+                eprintln!("warning: cursor grab not supported on this platform, continuing without mouse-look capture ({e})");
+            }
+        }
+        window.set_cursor_visible(false);
+        // Discard any synthetic motion the grab call itself may have
+        // generated before the first real frame.
+        self.mouse_delta = MouseDelta::default();
+
         self.window = Some(window);
         self.last_instant = Some(Instant::now());
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            self.mouse_delta.dx += dx as f32;
+            self.mouse_delta.dy += dy as f32;
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -280,6 +315,8 @@ impl ApplicationHandler for App<'_> {
         self.accumulator += elapsed.min(0.25);
 
         self.sim.resources.insert(self.input.clone());
+        self.sim.resources.insert(self.mouse_delta);
+        self.mouse_delta = MouseDelta::default();
         while self.accumulator >= self.sim.dt {
             if let Err(e) = crate::step_and_dispatch_with_input(
                 &mut self.sim,

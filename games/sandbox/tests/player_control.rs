@@ -25,6 +25,7 @@ use engine_core::sim::Sim;
 use engine_core::{Input, KeyCode};
 use engine_physics::{physics_step, BodyType, Collider, ColliderShape, RigidBody};
 use glam::Vec3;
+use sandbox::camera_follow::CameraFollow;
 use sandbox::player_control::{player_control_system, CharacterVelocity, PlayerControl};
 
 fn spawn_ground(sim: &mut Sim) {
@@ -256,5 +257,109 @@ fn no_input_leaves_the_player_at_rest_horizontally() {
         (position.y - RESTING_Y).abs() < RESTING_TOLERANCE,
         "expected the player to settle at resting height under its own gravity, got y={}",
         position.y
+    );
+}
+
+fn camera_follow_with_yaw(yaw: f32) -> CameraFollow {
+    CameraFollow {
+        yaw,
+        pitch: 0.0,
+        distance: 1.0,
+        sensitivity: 0.003,
+        pitch_min: -1.2,
+        pitch_max: 1.2,
+        look_offset: Vec3::ZERO,
+    }
+}
+
+#[test]
+fn camera_yaw_rotates_movement_to_be_camera_relative() {
+    let mut sim = Sim::new(0, 1.0 / 60.0);
+    sim.scheduler_mut()
+        .add_system("player_control", player_control_system)
+        .add_system("physics", physics_step);
+
+    spawn_ground(&mut sim);
+    let player = spawn_player(&mut sim, 0.0, 0.0, default_control());
+    // No `Camera` component needed — `player_control_system` only reads
+    // `CameraFollow.yaw`, not the camera's own placement.
+    sim.world
+        .spawn((camera_follow_with_yaw(std::f32::consts::FRAC_PI_2),));
+
+    let mut input = Input::default();
+    input.set_held(KeyCode::W, true);
+    sim.resources.insert(input);
+
+    sim.run(30).unwrap();
+
+    let position = sim
+        .world
+        .get::<&engine_core::Transform>(player)
+        .unwrap()
+        .position;
+    assert!(
+        position.x.abs() > 0.5,
+        "expected a 90-degree camera yaw to redirect forward (W) onto the X axis, got {position:?}"
+    );
+    assert!(
+        position.z.abs() < 0.1,
+        "expected negligible Z movement once camera yaw redirects forward onto X, got {position:?}"
+    );
+}
+
+#[test]
+fn moving_rotates_the_player_to_face_the_movement_direction() {
+    let mut sim = Sim::new(0, 1.0 / 60.0);
+    sim.scheduler_mut()
+        .add_system("player_control", player_control_system)
+        .add_system("physics", physics_step);
+
+    spawn_ground(&mut sim);
+    let player = spawn_player(&mut sim, 0.0, 0.0, default_control());
+
+    let mut input = Input::default();
+    input.set_held(KeyCode::D, true);
+    sim.resources.insert(input);
+
+    sim.run(30).unwrap();
+
+    let rotation = sim
+        .world
+        .get::<&engine_core::Transform>(player)
+        .unwrap()
+        .rotation;
+    let facing = rotation * Vec3::NEG_Z;
+    // Holding D alone (no camera entity, yaw defaults to 0.0) moves the
+    // player in +X; it should end up facing that same direction.
+    assert!(
+        facing.dot(Vec3::X) > 0.9,
+        "expected the player to face its movement direction (+X), got facing={facing:?}"
+    );
+}
+
+#[test]
+fn no_camera_entity_falls_back_to_world_relative_movement() {
+    let mut sim = Sim::new(0, 1.0 / 60.0);
+    sim.scheduler_mut()
+        .add_system("player_control", player_control_system)
+        .add_system("physics", physics_step);
+
+    spawn_ground(&mut sim);
+    let player = spawn_player(&mut sim, 0.0, 0.0, default_control());
+
+    let mut input = Input::default();
+    input.set_held(KeyCode::W, true);
+    sim.resources.insert(input);
+
+    sim.run(30).unwrap();
+
+    let position = sim
+        .world
+        .get::<&engine_core::Transform>(player)
+        .unwrap()
+        .position;
+    assert!(
+        position.z < -0.5,
+        "expected W with no camera entity to move in world -Z (today's default), got {position:?}"
     );
 }
