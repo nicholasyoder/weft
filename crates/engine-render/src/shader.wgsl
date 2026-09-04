@@ -18,11 +18,15 @@ var s_color: sampler;
 // green is roughness, blue is metallic. Reuses `s_color`, same as t_color.
 @group(1) @binding(2)
 var t_mr: texture_2d<f32>;
+// Tangent-space normal map (Phase 3). Reuses `s_color` too.
+@group(1) @binding(3)
+var t_normal: texture_2d<f32>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -30,6 +34,9 @@ struct VertexOutput {
     @location(0) world_normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) world_position: vec3<f32>,
+    // xyz tangent direction, w handedness — passed through unchanged, see
+    // `fs_main`'s TBN construction.
+    @location(3) world_tangent: vec4<f32>,
 };
 
 @vertex
@@ -40,6 +47,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.world_normal = (u.model * vec4<f32>(in.normal, 0.0)).xyz;
     out.uv = in.uv;
     out.world_position = world_pos.xyz;
+    // A tangent is an ordinary embedded direction, not a normal — it
+    // transforms by the model matrix's plain linear part, not the
+    // inverse-transpose `world_normal` uses.
+    out.world_tangent = vec4<f32>((u.model * vec4<f32>(in.tangent.xyz, 0.0)).xyz, in.tangent.w);
     return out;
 }
 
@@ -107,7 +118,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let roughness = clamp(u.material.x * mr.g, 0.045, 1.0);
     let metallic = clamp(u.material.y * mr.b, 0.0, 1.0);
 
-    let n = normalize(in.world_normal);
+    let geometric_normal = normalize(in.world_normal);
+    // Re-orthogonalize after interpolation (interpolating across a
+    // triangle's 3 corners doesn't preserve exact perpendicularity), then
+    // build the TBN basis and perturb the normal by the tangent-space
+    // normal map. The flat-normal default `(0,0,1)` reproduces
+    // `geometric_normal` exactly regardless of `tangent`/`bitangent`'s
+    // validity (their coefficients are zero in that case).
+    let tangent = normalize(
+        in.world_tangent.xyz - geometric_normal * dot(geometric_normal, in.world_tangent.xyz)
+    );
+    let bitangent = cross(geometric_normal, tangent) * in.world_tangent.w;
+    let tbn = mat3x3<f32>(tangent, bitangent, geometric_normal);
+    let sampled_normal = textureSample(t_normal, s_color, in.uv).rgb * 2.0 - vec3<f32>(1.0);
+    let scaled_normal = normalize(vec3<f32>(sampled_normal.xy * u.material.z, sampled_normal.z));
+    let n = normalize(tbn * scaled_normal);
+
     let v = normalize(u.camera_pos.xyz - in.world_position);
     let l = normalize(-u.light_dir.xyz);
 

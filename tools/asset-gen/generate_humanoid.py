@@ -115,6 +115,7 @@ def main():
         export_format="GLB",
         use_selection=True,
         export_apply=True,
+        export_tangents=True,
     )
     print(f"wrote {args.output}")
 

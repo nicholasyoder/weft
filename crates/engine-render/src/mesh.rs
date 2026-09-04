@@ -8,6 +8,27 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
+    /// `xyz` tangent direction, `w` handedness sign (`+1.0`/`-1.0`) used to
+    /// derive the bitangent as `cross(normal, tangent) * w` — see Phase 3 /
+    /// ADR-0019. Unconditional (not `Option`) so there's one vertex format,
+    /// not combinatorial pipeline variants; derived from `normal` via
+    /// `engine_assets::tangent::arbitrary_orthogonal` when no real tangent
+    /// data exists (never sampled meaningfully unless a normal map is
+    /// actually bound, see `gpu.rs`'s flat-normal default texture — but it
+    /// must still be a real vector genuinely perpendicular to `normal`, not
+    /// an arbitrary hardcoded axis: a fixed fallback direction can end up
+    /// exactly parallel to a real normal, e.g. an axis-aligned box face,
+    /// degenerating the shader's Gram-Schmidt step to NaN).
+    pub tangent: [f32; 4],
+}
+
+/// A valid, non-NaN tangent for a vertex with no real tangent data —
+/// derived from its actual normal (`engine_assets::tangent::arbitrary_orthogonal`)
+/// rather than a fixed hardcoded direction, which could end up exactly
+/// parallel to some real normal (see `Vertex::tangent`'s doc comment).
+fn fallback_tangent(normal: [f32; 3]) -> [f32; 4] {
+    let t = engine_assets::tangent::arbitrary_orthogonal(Vec3::from(normal));
+    [t.x, t.y, t.z, 1.0]
 }
 
 pub struct MeshData {
@@ -35,11 +56,17 @@ fn push_face(
         center - right * half_size + up * half_size,
     ];
     let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    // `right` is already the tangent direction (UVs are laid out along
+    // `right`/`up`); this fn's own invariant — `right x up == normal` — plus
+    // the cyclic cross-product identity means `cross(normal, right) == up`
+    // always, so handedness is uniformly +1.0.
+    let tangent = [right.x, right.y, right.z, 1.0];
     for (corner, uv) in corners.into_iter().zip(uvs) {
         vertices.push(Vertex {
             position: corner.to_array(),
             normal: normal.to_array(),
             uv,
+            tangent,
         });
     }
     indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -84,10 +111,16 @@ pub fn sphere() -> MeshData {
             let u = seg as f32 / SEGMENTS as f32;
             let theta = u * std::f32::consts::TAU;
             let dir = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
+            // The analytic tangent along increasing longitude — perpendicular
+            // to `dir` everywhere (including the poles: unlike `dir` itself
+            // it doesn't depend on the degenerate `phi.sin()` term), so no
+            // normalize-of-zero risk.
+            let tangent = Vec3::new(-theta.sin(), 0.0, theta.cos());
             vertices.push(Vertex {
                 position: (dir * RADIUS).to_array(),
                 normal: dir.to_array(),
                 uv: [u, v],
+                tangent: [tangent.x, tangent.y, tangent.z, 1.0],
             });
         }
     }
@@ -124,6 +157,8 @@ pub struct SkinnedVertex {
     pub uv: [f32; 2],
     pub joints: [u32; 4],
     pub weights: [f32; 4],
+    /// See `Vertex::tangent`'s doc comment.
+    pub tangent: [f32; 4],
 }
 
 pub struct SkinnedMeshData {
@@ -144,12 +179,21 @@ pub struct SkinnedMeshData {
 pub fn from_skinned_asset(
     data: &engine_assets::mesh::MeshData,
     skin: &engine_assets::skin::SkinData,
+    tangents: Option<&engine_assets::tangent::TangentData>,
 ) -> Result<SkinnedMeshData, RenderError> {
     if data.positions.len() != skin.joints.len() {
         return Err(RenderError::SkinVertexCountMismatch {
             mesh: data.positions.len(),
             skin: skin.joints.len(),
         });
+    }
+    if let Some(t) = tangents {
+        if data.positions.len() != t.tangents.len() {
+            return Err(RenderError::TangentVertexCountMismatch {
+                mesh: data.positions.len(),
+                tangent: t.tangents.len(),
+            });
+        }
     }
     let vertices = (0..data.positions.len())
         .map(|i| SkinnedVertex {
@@ -158,6 +202,7 @@ pub fn from_skinned_asset(
             uv: data.uvs[i],
             joints: skin.joints[i].map(u32::from),
             weights: skin.weights[i],
+            tangent: tangents.map_or_else(|| fallback_tangent(data.normals[i]), |t| t.tangents[i]),
         })
         .collect();
     Ok(SkinnedMeshData {
@@ -167,19 +212,33 @@ pub fn from_skinned_asset(
 }
 
 /// Converts an imported `engine-assets` mesh (plain position/normal/uv data)
-/// into the interleaved GPU-ready form the render pipeline uses.
-pub fn from_asset(data: &engine_assets::mesh::MeshData) -> MeshData {
+/// into the interleaved GPU-ready form the render pipeline uses. Returns
+/// `RenderError::TangentVertexCountMismatch` for the same corrupt-store
+/// reason `from_skinned_asset` checks it.
+pub fn from_asset(
+    data: &engine_assets::mesh::MeshData,
+    tangents: Option<&engine_assets::tangent::TangentData>,
+) -> Result<MeshData, RenderError> {
+    if let Some(t) = tangents {
+        if data.positions.len() != t.tangents.len() {
+            return Err(RenderError::TangentVertexCountMismatch {
+                mesh: data.positions.len(),
+                tangent: t.tangents.len(),
+            });
+        }
+    }
     let vertices = (0..data.positions.len())
         .map(|i| Vertex {
             position: data.positions[i],
             normal: data.normals[i],
             uv: data.uvs[i],
+            tangent: tangents.map_or_else(|| fallback_tangent(data.normals[i]), |t| t.tangents[i]),
         })
         .collect();
-    MeshData {
+    Ok(MeshData {
         vertices,
         indices: data.indices.clone(),
-    }
+    })
 }
 
 /// A flat ground-sized quad in the XZ plane at y = 0, facing +Y.
@@ -219,10 +278,34 @@ mod tests {
             weights: vec![[1.0, 0.0, 0.0, 0.0]; 2],
         };
 
-        let result = from_skinned_asset(&mesh, &skin);
+        let result = from_skinned_asset(&mesh, &skin, None);
         assert!(matches!(
             result,
             Err(RenderError::SkinVertexCountMismatch { mesh: 3, skin: 2 })
+        ));
+    }
+
+    /// Same corrupt-store scenario as the skin case above, but for a
+    /// mesh/tangent pair that doesn't come from the same import.
+    #[test]
+    fn mismatched_tangent_counts_return_an_error_instead_of_panicking() {
+        let mesh = engine_assets::mesh::MeshData {
+            positions: vec![[0.0, 0.0, 0.0]; 3],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            uvs: vec![[0.0, 0.0]; 3],
+            indices: vec![0, 1, 2],
+        };
+        let tangents = engine_assets::tangent::TangentData {
+            tangents: vec![[1.0, 0.0, 0.0, 1.0]; 2],
+        };
+
+        let result = from_asset(&mesh, Some(&tangents));
+        assert!(matches!(
+            result,
+            Err(RenderError::TangentVertexCountMismatch {
+                mesh: 3,
+                tangent: 2
+            })
         ));
     }
 }

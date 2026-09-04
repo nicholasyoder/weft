@@ -9,6 +9,7 @@ use crate::mesh::{self, MeshData};
 use crate::skeleton::{self, Joint, Skeleton, Trs};
 use crate::skin::{self, SkinData};
 use crate::store::AssetStore;
+use crate::tangent::{self, TangentData};
 
 /// The result of importing a single-mesh, single-primitive glTF file:
 /// enough to emit a `MeshRef`/`Material`/`Animator` scene-text-file
@@ -23,6 +24,9 @@ pub struct ImportedAsset {
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub metallic_roughness_texture_hash: Option<String>,
+    pub normal_texture_hash: Option<String>,
+    pub normal_scale: f32,
+    pub tangent_hash: Option<String>,
     pub skin_hash: Option<String>,
     pub skeleton_hash: Option<String>,
     pub clip_hash: Option<String>,
@@ -126,13 +130,6 @@ pub fn import_gltf(path: &Path, store: &AssetStore) -> Result<ImportedAsset, Ass
         })
         .collect();
 
-    let mesh_hash = store.put(&mesh::encode(&MeshData {
-        positions,
-        normals,
-        uvs,
-        indices,
-    })?)?;
-
     let material = primitive.material();
     let pbr = material.pbr_metallic_roughness();
     let base_color_factor = pbr.base_color_factor();
@@ -159,6 +156,52 @@ pub fn import_gltf(path: &Path, store: &AssetStore) -> Result<ImportedAsset, Ass
         }
         None => None,
     };
+
+    let normal_texture_hash = match material.normal_texture() {
+        Some(info) => {
+            let image_data = &images[info.texture().source().index()];
+            Some(store_embedded_image(image_data, &label, store)?)
+        }
+        None => None,
+    };
+    let normal_scale = material
+        .normal_texture()
+        .map(|nt| nt.scale())
+        .unwrap_or(1.0);
+
+    // Tangents are only generated/stored when a normal map is actually
+    // assigned — no point paying for unused data. Read the glTF file's own
+    // TANGENT accessor first (already includes a handedness `w`); when
+    // absent, generate from the mesh's own (already-transformed, for the
+    // unskinned case) positions/normals/UVs. A file-provided tangent's
+    // `xyz` is still in the file's original space, so — for an unskinned
+    // mesh — it needs the same rotation `positions`/`normals` above were
+    // just baked with; a tangent is an ordinary embedded direction, not a
+    // normal, so it uses the plain 3x3 (`transform`'s linear part), not
+    // `normal_matrix`'s inverse-transpose.
+    let tangent_hash = if normal_texture_hash.is_some() {
+        let tangents: Vec<[f32; 4]> = match reader.read_tangents() {
+            Some(iter) => {
+                let rotation = Mat3::from_mat4(transform);
+                iter.map(|t| {
+                    let rotated = rotation.mul_vec3(Vec3::new(t[0], t[1], t[2])).normalize();
+                    [rotated.x, rotated.y, rotated.z, t[3]]
+                })
+                .collect()
+            }
+            None => tangent::generate(&positions, &normals, &uvs, &indices),
+        };
+        Some(store.put(&tangent::encode(&TangentData { tangents })?)?)
+    } else {
+        None
+    };
+
+    let mesh_hash = store.put(&mesh::encode(&MeshData {
+        positions,
+        normals,
+        uvs,
+        indices,
+    })?)?;
 
     let (skin_hash, skeleton_hash, clip_hash) = match skin {
         Some(skin) => {
@@ -224,6 +267,9 @@ pub fn import_gltf(path: &Path, store: &AssetStore) -> Result<ImportedAsset, Ass
         metallic_factor,
         roughness_factor,
         metallic_roughness_texture_hash,
+        normal_texture_hash,
+        normal_scale,
+        tangent_hash,
         skin_hash,
         skeleton_hash,
         clip_hash,

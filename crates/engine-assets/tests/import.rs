@@ -113,6 +113,32 @@ fn importing_a_gltf_with_a_metallic_roughness_texture_stores_it_distinctly_from_
 }
 
 #[test]
+fn importing_a_gltf_with_a_normal_map_generates_one_tangent_per_vertex() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let imported = import_gltf(&fixture("box_normal_map.gltf"), &store).unwrap();
+    let normal_hash = imported
+        .normal_texture_hash
+        .expect("expected a normal map texture");
+    let tangent_hash = imported.tangent_hash.expect("expected generated tangents");
+    assert_eq!(imported.normal_scale, 1.0);
+
+    let bytes = store.get(&normal_hash).unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert!(decoded.width() > 0 && decoded.height() > 0);
+
+    let mesh_data = mesh::decode(&store.get(&imported.mesh_hash).unwrap()).unwrap();
+    let tangent_data = engine_assets::tangent::decode(&store.get(&tangent_hash).unwrap()).unwrap();
+    assert_eq!(tangent_data.tangents.len(), mesh_data.positions.len());
+    for t in &tangent_data.tangents {
+        for c in t {
+            assert!(c.is_finite());
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn multi_primitive_gltf_is_a_structured_error() {
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);

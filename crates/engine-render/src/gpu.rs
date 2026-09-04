@@ -54,6 +54,11 @@ struct Drawable {
     /// convention for `metallicRoughnessTexture`) — see Phase 2 /
     /// ADR-0019. `None` renders identically to Phase 1 (scalars only).
     metallic_roughness_texture: Option<String>,
+    /// Content hash of a tangent-space normal map — see Phase 3 / ADR-0019.
+    /// `None` renders identically to Phase 2 (the flat-normal default, a
+    /// mathematically exact no-op).
+    normal_texture: Option<String>,
+    normal_scale: f32,
     /// A content hash into the `SkinData` asset store, plus the same
     /// entity's `JointPalette` matrices (if any) — both must be present to
     /// actually draw skinned; see `draw()`'s `use_skinned` check for why a
@@ -61,6 +66,10 @@ struct Drawable {
     /// rather than erroring or guessing a joint count.
     skin: Option<String>,
     joint_matrices: Option<Vec<[[f32; 4]; 4]>>,
+    /// Content hash into the `TangentData` asset store — `None` for any
+    /// mesh with no normal map assigned (see `MeshRef.tangent`'s doc
+    /// comment).
+    tangent: Option<String>,
 }
 
 struct TextDrawable {
@@ -202,15 +211,24 @@ pub struct RenderContext {
     // metallic-roughness too): white is simultaneously a no-op color tint
     // and a no-op rough/metal multiplier, so one texture covers both.
     white_view: wgpu::TextureView,
+    // Shared 1x1 flat-tangent-space-normal view `(128,128,255)` — decodes to
+    // `(0,0,1)`, the "no perturbation" default for the normal-map slot
+    // (Phase 3). Plain white would decode to an out-of-range direction, so
+    // this can't reuse `white_view`.
+    flat_normal_view: wgpu::TextureView,
     white_bind_group: wgpu::BindGroup,
     cube_buffers: MeshBuffers,
     plane_buffers: MeshBuffers,
     sphere_buffers: MeshBuffers,
-    mesh_cache: LruCache<String, MeshBuffers>,
+    // Keyed by (mesh_hash, tangent_hash) — Phase 3 lets a `MeshRef`
+    // reference an independent tangent-data asset, so the bare mesh hash no
+    // longer uniquely identifies the vertex buffer a drawable needs (same
+    // reasoning `texture_cache`/`skin_cache` already apply).
+    mesh_cache: LruCache<(String, Option<String>), MeshBuffers>,
     // Keyed by (base_color_hash, metallic_roughness_hash) — Phase 2 lets a
     // material reference two independent textures, so either hash alone no
     // longer uniquely identifies the bind group a drawable needs.
-    texture_cache: LruCache<(String, Option<String>), wgpu::BindGroup>,
+    texture_cache: LruCache<(String, Option<String>, Option<String>), wgpu::BindGroup>,
     // Skinned mesh pass — a second shader/pipeline (opaque, same depth
     // settings as the 3D pipeline; not alpha-blended like the UI pass
     // below) with a third bind group carrying a per-draw joint-matrix
@@ -222,7 +240,7 @@ pub struct RenderContext {
     // Keyed by (mesh_hash, skin_hash) — a mesh could in principle be
     // referenced with different skins, though `engine import` never
     // produces that today.
-    skin_cache: LruCache<(String, String), MeshBuffers>,
+    skin_cache: LruCache<(String, String, Option<String>), MeshBuffers>,
     // UI/text pass — a second shader/pipeline (alpha-blended, depth-always)
     // reusing `texture_bind_group_layout`/`sampler` above for its glyph
     // atlas textures, since an R8Unorm atlas fits that same layout shape.
@@ -256,6 +274,12 @@ fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
                 shader_location: 2,
                 format: wgpu::VertexFormat::Float32x2,
             },
+            wgpu::VertexAttribute {
+                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<[f32; 2]>())
+                    as wgpu::BufferAddress,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Float32x4,
+            },
         ],
     }
 }
@@ -264,6 +288,9 @@ fn skinned_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     const JOINTS_OFFSET: wgpu::BufferAddress = (std::mem::size_of::<[f32; 3]>() * 2
         + std::mem::size_of::<[f32; 2]>())
         as wgpu::BufferAddress;
+    const TANGENT_OFFSET: wgpu::BufferAddress = JOINTS_OFFSET
+        + std::mem::size_of::<[u32; 4]>() as wgpu::BufferAddress
+        + std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress;
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<SkinnedVertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -291,6 +318,11 @@ fn skinned_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
             wgpu::VertexAttribute {
                 offset: JOINTS_OFFSET + std::mem::size_of::<[u32; 4]>() as wgpu::BufferAddress,
                 shader_location: 4,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+            wgpu::VertexAttribute {
+                offset: TANGENT_OFFSET,
+                shader_location: 5,
                 format: wgpu::VertexFormat::Float32x4,
             },
         ],
@@ -416,6 +448,18 @@ impl RenderContext {
                         },
                         count: None,
                     },
+                    // Normal map (Phase 3) — reuses the same shared sampler
+                    // too, same reasoning as binding 2 above.
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -475,11 +519,13 @@ impl RenderContext {
         // look exactly, and white as a rough/metal multiplier is likewise a
         // no-op, so one shader code path covers both cases.
         let white_view = upload_white_texture_view(device, &core.queue);
+        let flat_normal_view = upload_flat_normal_view(device, &core.queue);
         let white_bind_group = create_white_texture_bind_group(
             device,
             &texture_bind_group_layout,
             &sampler,
             &white_view,
+            &flat_normal_view,
         );
 
         let ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -528,6 +574,7 @@ impl RenderContext {
             pipelines: HashMap::new(),
             sampler,
             white_view,
+            flat_normal_view,
             white_bind_group,
             cube_buffers,
             plane_buffers,
@@ -699,7 +746,12 @@ impl RenderContext {
                     model: drawable.transform.to_matrix().to_cols_array_2d(),
                     color: [drawable.color[0], drawable.color[1], drawable.color[2], 1.0],
                     light_dir: [LIGHT_DIR.x, LIGHT_DIR.y, LIGHT_DIR.z, 0.0],
-                    material: [drawable.roughness, drawable.metallic, 0.0, 0.0],
+                    material: [
+                        drawable.roughness,
+                        drawable.metallic,
+                        drawable.normal_scale,
+                        0.0,
+                    ],
                     camera_pos: [camera_pos.x, camera_pos.y, camera_pos.z, 0.0],
                 };
                 let uniform_buffer =
@@ -723,27 +775,32 @@ impl RenderContext {
                     });
                 per_draw_state.push((uniform_buffer, bind_group));
 
-                let texture_bind_group =
-                    match (&drawable.texture, &drawable.metallic_roughness_texture) {
-                        (None, None) => &self.white_bind_group,
-                        (base_color, metallic_roughness) => {
-                            let key = texture_cache_key(base_color, metallic_roughness);
-                            if !self.texture_cache.contains(&key) {
-                                let bind_group = load_texture_bind_group(
-                                    base_color.as_deref(),
-                                    metallic_roughness.as_deref(),
-                                    &self.core.device,
-                                    &self.core.queue,
-                                    &asset_store,
-                                    &self.texture_bind_group_layout,
-                                    &self.sampler,
-                                    &self.white_view,
-                                )?;
-                                self.texture_cache.put(key.clone(), bind_group);
-                            }
-                            self.texture_cache.get(&key).unwrap()
+                let texture_bind_group = match (
+                    &drawable.texture,
+                    &drawable.metallic_roughness_texture,
+                    &drawable.normal_texture,
+                ) {
+                    (None, None, None) => &self.white_bind_group,
+                    (base_color, metallic_roughness, normal) => {
+                        let key = texture_cache_key(base_color, metallic_roughness, normal);
+                        if !self.texture_cache.contains(&key) {
+                            let bind_group = load_texture_bind_group(
+                                base_color.as_deref(),
+                                metallic_roughness.as_deref(),
+                                normal.as_deref(),
+                                &self.core.device,
+                                &self.core.queue,
+                                &asset_store,
+                                &self.texture_bind_group_layout,
+                                &self.sampler,
+                                &self.white_view,
+                                &self.flat_normal_view,
+                            )?;
+                            self.texture_cache.put(key.clone(), bind_group);
                         }
-                    };
+                        self.texture_cache.get(&key).unwrap()
+                    }
+                };
 
                 let (_, bind_group) = per_draw_state.last().unwrap();
 
@@ -756,18 +813,22 @@ impl RenderContext {
                 // guessing a joint count or hard-failing; see `Drawable`'s
                 // doc comment.
                 let skinned = match (&drawable.mesh, &drawable.skin, &drawable.joint_matrices) {
-                    (MeshKind::Asset(mesh_hash), Some(skin_hash), Some(matrices)) => {
-                        Some((mesh_hash.clone(), skin_hash.clone(), matrices))
-                    }
+                    (MeshKind::Asset(mesh_hash), Some(skin_hash), Some(matrices)) => Some((
+                        mesh_hash.clone(),
+                        skin_hash.clone(),
+                        drawable.tangent.clone(),
+                        matrices,
+                    )),
                     _ => None,
                 };
 
-                if let Some((mesh_hash, skin_hash, matrices)) = skinned {
-                    let key = (mesh_hash, skin_hash);
+                if let Some((mesh_hash, skin_hash, tangent_hash, matrices)) = skinned {
+                    let key = (mesh_hash, skin_hash, tangent_hash);
                     if !self.skin_cache.contains(&key) {
                         let buffers = load_skinned_mesh_buffers(
                             &key.0,
                             &key.1,
+                            key.2.as_deref(),
                             &self.core.device,
                             &asset_store,
                         )?;
@@ -825,11 +886,17 @@ impl RenderContext {
                         self.sphere_buffers.2,
                     ),
                     MeshKind::Asset(hash) => {
-                        if !self.mesh_cache.contains(hash) {
-                            let buffers = load_mesh_buffers(hash, &self.core.device, &asset_store)?;
-                            self.mesh_cache.put(hash.clone(), buffers);
+                        let key = (hash.clone(), drawable.tangent.clone());
+                        if !self.mesh_cache.contains(&key) {
+                            let buffers = load_mesh_buffers(
+                                hash,
+                                drawable.tangent.as_deref(),
+                                &self.core.device,
+                                &asset_store,
+                            )?;
+                            self.mesh_cache.put(key.clone(), buffers);
                         }
-                        let (vb, ib, count) = self.mesh_cache.get(hash).unwrap();
+                        let (vb, ib, count) = self.mesh_cache.get(&key).unwrap();
                         (vb, ib, *count)
                     }
                 };
@@ -998,8 +1065,11 @@ fn extract_scene(
                     metallic: mat.metallic,
                     texture: mat.texture.clone(),
                     metallic_roughness_texture: mat.metallic_roughness_texture.clone(),
+                    normal_texture: mat.normal_texture.clone(),
+                    normal_scale: mat.normal_scale,
                     skin: m.skin.clone(),
                     joint_matrices: palette.map(|p| p.matrices.clone()),
+                    tangent: m.tangent.clone(),
                 },
             )
         })
@@ -1171,12 +1241,17 @@ fn upload_mesh(device: &wgpu::Device, data: &mesh::MeshData) -> MeshBuffers {
 
 fn load_mesh_buffers(
     hash: &str,
+    tangent_hash: Option<&str>,
     device: &wgpu::Device,
     store: &engine_assets::AssetStore,
 ) -> Result<MeshBuffers, RenderError> {
     let bytes = store.get(hash)?;
     let mesh_data = engine_assets::mesh::decode(&bytes)?;
-    let render_mesh = mesh::from_asset(&mesh_data);
+    let tangent_data = match tangent_hash {
+        Some(h) => Some(engine_assets::tangent::decode(&store.get(h)?)?),
+        None => None,
+    };
+    let render_mesh = mesh::from_asset(&mesh_data, tangent_data.as_ref())?;
     Ok(upload_mesh(device, &render_mesh))
 }
 
@@ -1197,6 +1272,7 @@ fn upload_skinned_mesh(device: &wgpu::Device, data: &mesh::SkinnedMeshData) -> M
 fn load_skinned_mesh_buffers(
     mesh_hash: &str,
     skin_hash: &str,
+    tangent_hash: Option<&str>,
     device: &wgpu::Device,
     store: &engine_assets::AssetStore,
 ) -> Result<MeshBuffers, RenderError> {
@@ -1204,21 +1280,27 @@ fn load_skinned_mesh_buffers(
     let mesh_data = engine_assets::mesh::decode(&mesh_bytes)?;
     let skin_bytes = store.get(skin_hash)?;
     let skin_data = engine_assets::skin::decode(&skin_bytes)?;
-    let skinned_mesh = mesh::from_skinned_asset(&mesh_data, &skin_data)?;
+    let tangent_data = match tangent_hash {
+        Some(h) => Some(engine_assets::tangent::decode(&store.get(h)?)?),
+        None => None,
+    };
+    let skinned_mesh = mesh::from_skinned_asset(&mesh_data, &skin_data, tangent_data.as_ref())?;
     Ok(upload_skinned_mesh(device, &skinned_mesh))
 }
 
-/// The `texture_cache` key for a drawable's texture pair — `unwrap_or_default`
+/// The `texture_cache` key for a drawable's texture triple — `unwrap_or_default`
 /// on the base-color slot is safe here since this is only ever called when
-/// at least one of the two is `Some` (the `(None, None)` case bypasses the
-/// cache entirely, using `white_bind_group` directly).
+/// at least one of the three is `Some` (the `(None, None, None)` case
+/// bypasses the cache entirely, using `white_bind_group` directly).
 fn texture_cache_key(
     base_color: &Option<String>,
     metallic_roughness: &Option<String>,
-) -> (String, Option<String>) {
+    normal: &Option<String>,
+) -> (String, Option<String>, Option<String>) {
     (
         base_color.clone().unwrap_or_default(),
         metallic_roughness.clone(),
+        normal.clone(),
     )
 }
 
@@ -1282,11 +1364,22 @@ fn upload_white_texture_view(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu
     upload_rgba_texture(device, queue, &white, wgpu::TextureFormat::Rgba8UnormSrgb)
 }
 
+/// A 1x1 flat tangent-space-normal view `(128,128,255)` — decodes to
+/// `(0,0,1)`, the "no perturbation" default for the normal-map slot (Phase
+/// 3). Linear, not sRGB — its channels are packed directions, not color,
+/// same reasoning as the metallic-roughness texture's `load_rgba_view`
+/// call below.
+fn upload_flat_normal_view(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+    let flat = image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 128, 255, 255]));
+    upload_rgba_texture(device, queue, &flat, wgpu::TextureFormat::Rgba8Unorm)
+}
+
 fn create_white_texture_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
     white_view: &wgpu::TextureView,
+    flat_normal_view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("weft-white-texture-bind-group"),
@@ -1303,6 +1396,10 @@ fn create_white_texture_bind_group(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::TextureView(white_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(flat_normal_view),
             },
         ],
     })
@@ -1343,12 +1440,14 @@ fn load_rgba_view(
 fn load_texture_bind_group(
     base_color_hash: Option<&str>,
     metallic_roughness_hash: Option<&str>,
+    normal_hash: Option<&str>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     store: &engine_assets::AssetStore,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
     white_view: &wgpu::TextureView,
+    flat_normal_view: &wgpu::TextureView,
 ) -> Result<wgpu::BindGroup, RenderError> {
     let color_view = match base_color_hash {
         Some(hash) => load_rgba_view(hash, device, queue, store, true)?,
@@ -1357,6 +1456,10 @@ fn load_texture_bind_group(
     let mr_view = match metallic_roughness_hash {
         Some(hash) => load_rgba_view(hash, device, queue, store, false)?,
         None => white_view.clone(),
+    };
+    let normal_view = match normal_hash {
+        Some(hash) => load_rgba_view(hash, device, queue, store, false)?,
+        None => flat_normal_view.clone(),
     };
     Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("weft-imported-texture-bind-group"),
@@ -1373,6 +1476,10 @@ fn load_texture_bind_group(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::TextureView(&mr_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&normal_view),
             },
         ],
     }))
@@ -1462,18 +1569,29 @@ mod tests {
     #[test]
     fn texture_cache_key_distinguishes_by_metallic_roughness_hash_too() {
         let base_color = Some("base-color-hash".to_string());
-        let key_a = texture_cache_key(&base_color, &Some("mr-hash-a".to_string()));
-        let key_b = texture_cache_key(&base_color, &Some("mr-hash-b".to_string()));
+        let key_a = texture_cache_key(&base_color, &Some("mr-hash-a".to_string()), &None);
+        let key_b = texture_cache_key(&base_color, &Some("mr-hash-b".to_string()), &None);
         assert_ne!(key_a, key_b);
     }
 
-    /// Same base-color hash, no metallic-roughness texture on either side
-    /// — must key identically so the cache actually hits.
+    /// Same base-color and metallic-roughness hashes, differing only by
+    /// normal-map hash — must still key distinctly, or a second material
+    /// would silently render with the first's normal map.
+    #[test]
+    fn texture_cache_key_distinguishes_by_normal_hash_too() {
+        let base_color = Some("base-color-hash".to_string());
+        let key_a = texture_cache_key(&base_color, &None, &Some("normal-hash-a".to_string()));
+        let key_b = texture_cache_key(&base_color, &None, &Some("normal-hash-b".to_string()));
+        assert_ne!(key_a, key_b);
+    }
+
+    /// Same base-color hash, no metallic-roughness/normal texture on either
+    /// side — must key identically so the cache actually hits.
     #[test]
     fn texture_cache_key_matches_when_both_hashes_match() {
         let base_color = Some("base-color-hash".to_string());
-        let key_a = texture_cache_key(&base_color, &None);
-        let key_b = texture_cache_key(&base_color, &None);
+        let key_a = texture_cache_key(&base_color, &None, &None);
+        let key_b = texture_cache_key(&base_color, &None, &None);
         assert_eq!(key_a, key_b);
     }
 }

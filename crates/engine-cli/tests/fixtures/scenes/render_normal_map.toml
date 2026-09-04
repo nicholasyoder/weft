@@ -1,0 +1,26 @@
+[[entity]]
+name = "camera"
+
+[entity.components.Transform]
+position = [2.0, 1.5, 2.5]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "normal_mapped_box"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.MeshRef]
+mesh = { asset = "d334da34b651685ed83d89c075b95722078b178df4da1228e12a9ff9b4a90225" }
+tangent = "771889a08632aeb75f42f6480f09d5fb6c673a242e376bcf4a79f800063e16e9"
+
+[entity.components.Material]
+color = [0.7, 0.7, 0.75]
+roughness = 0.6
+metallic = 0.0
+normal_texture = "2cb7b1e51dc03b3204904ae971d95f0c490c74d1237d95d6848b3606a5a6d395"
+normal_scale = 1.0

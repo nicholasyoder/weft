@@ -34,6 +34,10 @@ pub enum AssetError {
     SkeletonEncodeFailed(String),
     #[error("failed to decode skeleton data: {0}")]
     SkeletonDecodeFailed(String),
+    #[error("failed to encode tangent data: {0}")]
+    TangentEncodeFailed(String),
+    #[error("failed to decode tangent data: {0}")]
+    TangentDecodeFailed(String),
     #[error("failed to encode animation data: {0}")]
     AnimationEncodeFailed(String),
     #[error("failed to decode animation data: {0}")]
@@ -51,6 +55,7 @@ impl AssetError {
             Self::MeshEncodeFailed(_) | Self::MeshDecodeFailed(_) => "ASSET_ENCODE_ERROR",
             Self::SkinEncodeFailed(_) | Self::SkinDecodeFailed(_) => "ASSET_ENCODE_ERROR",
             Self::SkeletonEncodeFailed(_) | Self::SkeletonDecodeFailed(_) => "ASSET_ENCODE_ERROR",
+            Self::TangentEncodeFailed(_) | Self::TangentDecodeFailed(_) => "ASSET_ENCODE_ERROR",
             Self::AnimationEncodeFailed(_) | Self::AnimationDecodeFailed(_) => "ASSET_ENCODE_ERROR",
         }
     }

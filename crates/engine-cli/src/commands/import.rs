@@ -50,6 +50,9 @@ pub(crate) fn gltf_fragment(imported: &engine_assets::ImportedAsset) -> String {
     if let Some(skin_hash) = &imported.skin_hash {
         fragment.push_str(&format!("skin = \"{skin_hash}\"\n"));
     }
+    if let Some(tangent_hash) = &imported.tangent_hash {
+        fragment.push_str(&format!("tangent = \"{tangent_hash}\"\n"));
+    }
     fragment.push('\n');
     fragment.push_str(&format!(
         "[entity.components.Material]\ncolor = [{:.6}, {:.6}, {:.6}]\n",
@@ -64,6 +67,12 @@ pub(crate) fn gltf_fragment(imported: &engine_assets::ImportedAsset) -> String {
     ));
     if let Some(mr_hash) = &imported.metallic_roughness_texture_hash {
         fragment.push_str(&format!("metallic_roughness_texture = \"{mr_hash}\"\n"));
+    }
+    if let Some(normal_hash) = &imported.normal_texture_hash {
+        fragment.push_str(&format!(
+            "normal_texture = \"{normal_hash}\"\nnormal_scale = {:.6}\n",
+            imported.normal_scale
+        ));
     }
     if let (Some(skeleton_hash), Some(clip_hash)) = (&imported.skeleton_hash, &imported.clip_hash) {
         fragment.push_str(&format!(

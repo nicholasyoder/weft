@@ -216,6 +216,12 @@ impl GlyphAtlas {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
+                // Binding 3 (Phase 3's normal-map slot) is likewise unused
+                // by the UI pass — same reasoning as binding 2 above.
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
             ],
         });
 

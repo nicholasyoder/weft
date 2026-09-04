@@ -32,6 +32,7 @@ fn cube_at(position: Vec3) -> (Transform, MeshRef, Material) {
         MeshRef {
             mesh: MeshKind::Cube,
             skin: None,
+            tangent: None,
         },
         Material {
             color: [0.8, 0.2, 0.2],
@@ -39,6 +40,8 @@ fn cube_at(position: Vec3) -> (Transform, MeshRef, Material) {
             roughness: 1.0,
             metallic: 0.0,
             metallic_roughness_texture: None,
+            normal_texture: None,
+            normal_scale: 1.0,
         },
     )
 }
@@ -187,6 +190,7 @@ fn rendering_an_imported_textured_mesh_produces_non_blank_output() {
         MeshRef {
             mesh: MeshKind::Asset(imported.mesh_hash),
             skin: None,
+            tangent: None,
         },
         Material {
             color: imported.base_color,
@@ -194,6 +198,8 @@ fn rendering_an_imported_textured_mesh_produces_non_blank_output() {
             roughness: 1.0,
             metallic: 0.0,
             metallic_roughness_texture: None,
+            normal_texture: None,
+            normal_scale: 1.0,
         },
     ));
 
@@ -216,6 +222,7 @@ fn rendering_a_scene_with_an_unknown_asset_hash_is_a_structured_error() {
         MeshRef {
             mesh: MeshKind::Asset("does-not-exist".to_string()),
             skin: None,
+            tangent: None,
         },
         Material {
             color: [1.0, 1.0, 1.0],
@@ -223,6 +230,8 @@ fn rendering_a_scene_with_an_unknown_asset_hash_is_a_structured_error() {
             roughness: 1.0,
             metallic: 0.0,
             metallic_roughness_texture: None,
+            normal_texture: None,
+            normal_scale: 1.0,
         },
     ));
 

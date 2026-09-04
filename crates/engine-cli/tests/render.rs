@@ -16,6 +16,9 @@ const ANIMATION_ASSETS_DIR: &str = "tests/fixtures/assets";
 const PBR_TEXTURE_SCENE: &str = "tests/fixtures/scenes/render_pbr_texture.toml";
 const PBR_TEXTURE_GOLDEN: &str = "tests/fixtures/scenes/render_pbr_texture.golden.png";
 const PBR_TEXTURE_ASSETS_DIR: &str = "tests/fixtures/assets";
+const NORMAL_MAP_SCENE: &str = "tests/fixtures/scenes/render_normal_map.toml";
+const NORMAL_MAP_GOLDEN: &str = "tests/fixtures/scenes/render_normal_map.golden.png";
+const NORMAL_MAP_ASSETS_DIR: &str = "tests/fixtures/assets";
 
 /// Per-channel tolerance for the golden-image comparison. Not blind byte
 /// equality: `lavapipe`/Mesa version drift across machines can shift
@@ -181,6 +184,35 @@ fn render_of_a_metallic_roughness_textured_mesh_matches_golden_image_within_tole
 
     let fresh = image::open(&out).unwrap().into_rgba8();
     let golden = image::open(PBR_TEXTURE_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
+#[test]
+fn render_of_a_normal_mapped_mesh_matches_golden_image_within_tolerance() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            NORMAL_MAP_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--assets-dir",
+            NORMAL_MAP_ASSETS_DIR,
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(NORMAL_MAP_GOLDEN).unwrap().into_rgba8();
     assert!(
         images_match_within_tolerance(&fresh, &golden),
         "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"

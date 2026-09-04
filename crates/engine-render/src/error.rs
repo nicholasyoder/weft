@@ -28,6 +28,10 @@ pub enum RenderError {
         "mesh/skin vertex count mismatch: mesh has {mesh} vertices, skin has {skin} — they must come from the same glTF primitive import"
     )]
     SkinVertexCountMismatch { mesh: usize, skin: usize },
+    #[error(
+        "mesh/tangent vertex count mismatch: mesh has {mesh} vertices, tangent data has {tangent} — they must come from the same glTF primitive import"
+    )]
+    TangentVertexCountMismatch { mesh: usize, tangent: usize },
 }
 
 impl RenderError {
@@ -44,6 +48,7 @@ impl RenderError {
             Self::AssetLoadFailed(_) => "RENDER_ASSET_ERROR",
             Self::FontParseFailed(_) => "RENDER_FONT_PARSE_ERROR",
             Self::SkinVertexCountMismatch { .. } => "RENDER_SKIN_VERTEX_MISMATCH",
+            Self::TangentVertexCountMismatch { .. } => "RENDER_TANGENT_VERTEX_MISMATCH",
         }
     }
 }

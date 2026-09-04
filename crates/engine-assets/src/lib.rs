@@ -7,6 +7,7 @@ pub mod mesh;
 pub mod skeleton;
 pub mod skin;
 mod store;
+pub mod tangent;
 mod texture_import;
 
 pub use audio_import::import_audio;

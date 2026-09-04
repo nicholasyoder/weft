@@ -50,6 +50,14 @@ pub struct MeshRef {
     /// existing scene file's `MeshRef` table unchanged.
     #[serde(default)]
     pub skin: Option<String>,
+    /// Content hash of an `engine_assets::tangent::TangentData` asset (see
+    /// Phase 3 / ADR-0019) — present only when a normal map is assigned to
+    /// this mesh, joined with `mesh`'s own vertex data at draw time. `None`
+    /// for the overwhelming majority of `MeshRef`s, so `#[serde(default)]`
+    /// keeps every existing scene file's `MeshRef` table unchanged (mirrors
+    /// `skin`'s own default behavior exactly).
+    #[serde(default)]
+    pub tangent: Option<String>,
 }
 
 /// Base color (optionally tinting a base color texture, referenced by
@@ -63,6 +71,12 @@ pub struct MeshRef {
 /// two scalars per-pixel — glTF's channel convention, honored here: green
 /// channel is roughness, blue is metallic (red and alpha unused, matching
 /// the glTF spec's `metallicRoughnessTexture`).
+///
+/// `normal_texture` (Phase 3) optionally perturbs the shading normal
+/// per-pixel via a tangent-space normal map (requires the mesh's own
+/// `MeshRef.tangent` to be set — see its doc comment); `normal_scale`
+/// (default `1.0`, glTF's own default) scales the map's tangent-space X/Y
+/// before it's renormalized, matching glTF's `normalTexture.scale`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     pub color: [f32; 3],
@@ -74,9 +88,17 @@ pub struct Material {
     pub metallic: f32,
     #[serde(default)]
     pub metallic_roughness_texture: Option<String>,
+    #[serde(default)]
+    pub normal_texture: Option<String>,
+    #[serde(default = "default_normal_scale")]
+    pub normal_scale: f32,
 }
 
 fn default_roughness() -> f32 {
+    1.0
+}
+
+fn default_normal_scale() -> f32 {
     1.0
 }
 
@@ -124,5 +146,7 @@ mod tests {
         assert_eq!(material.roughness, 1.0);
         assert_eq!(material.metallic, 0.0);
         assert_eq!(material.metallic_roughness_texture, None);
+        assert_eq!(material.normal_texture, None);
+        assert_eq!(material.normal_scale, 1.0);
     }
 }
