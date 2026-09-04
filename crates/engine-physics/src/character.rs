@@ -68,7 +68,19 @@ impl PhysicsState {
             let character_pos = body.position();
             let shape = collider.shape();
 
-            let filter = rp::QueryFilter::default().exclude_rigid_body(body_handle);
+            // `exclude_sensors()` is required, not incidental:
+            // `rp::QueryFilter::default()` does NOT exclude sensors (that's
+            // an opt-in flag, `QueryFilterFlags::EXCLUDE_SENSORS`), so
+            // without this a sensor collider (e.g. a pickup's trigger zone)
+            // is treated as a solid obstacle by the shape-cast sweep below —
+            // physically blocking the character from ever walking close
+            // enough to actually overlap it. Sensors are a completely
+            // separate, purely-informational query (`overlapping`, via
+            // rapier's intersection-pair tracking in `queries.rs`), never
+            // meant to obstruct movement.
+            let filter = rp::QueryFilter::default()
+                .exclude_rigid_body(body_handle)
+                .exclude_sensors();
             let query_pipeline = self.world.query_pipeline_with_filter(filter);
 
             let effective = KinematicCharacterController::default().move_shape(
@@ -167,6 +179,27 @@ mod tests {
         ));
     }
 
+    fn spawn_sensor_wall(sim: &mut Sim, x: f32) -> hecs::Entity {
+        sim.world.spawn((
+            RigidBody {
+                body_type: BodyType::Fixed,
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+            },
+            Collider {
+                shape: ColliderShape::Box {
+                    half_extents: Vec3::new(0.1, 5.0, 5.0),
+                },
+                restitution: 0.0,
+                friction: 0.5,
+                sensor: true,
+                membership: 1,
+                filter: u32::MAX,
+            },
+            Transform::from_position(Vec3::new(x, 0.0, 0.0)),
+        ))
+    }
+
     fn spawn_character(sim: &mut Sim, position: Vec3) -> hecs::Entity {
         sim.world.spawn((
             RigidBody {
@@ -222,6 +255,40 @@ mod tests {
         assert!(
             result.translation.x > 0.0,
             "expected the character to still move some distance toward the wall, got translation.x={}",
+            result.translation.x
+        );
+    }
+
+    /// Regression test for a real bug: `move_character`'s shape-cast used
+    /// `rp::QueryFilter::default()`, which does NOT exclude sensors —
+    /// `games/sandbox`'s pickups (fixed, `sensor = true`) were being
+    /// treated as solid obstacles, physically blocking the player from
+    /// ever walking close enough to actually trigger `overlapping()`.
+    /// Confirmed via a real walk-up simulation (not the existing
+    /// `games/sandbox/tests/pickup.rs`, which sidesteps this entirely by
+    /// teleporting onto an already-overlapping position pre-registration).
+    #[test]
+    fn move_character_passes_through_a_sensor_collider_without_blocking() {
+        let mut sim = Sim::new(0, 1.0 / 60.0);
+        sim.scheduler_mut()
+            .add_system("physics", crate::system::physics_step);
+
+        spawn_floor(&mut sim);
+        let character = spawn_character(&mut sim, Vec3::new(0.0, 0.9, 0.0));
+        spawn_sensor_wall(&mut sim, 1.5);
+
+        sim.step().unwrap(); // registers all bodies/colliders
+
+        let result = sim
+            .resources
+            .get_mut::<PhysicsState>()
+            .unwrap()
+            .move_character(character, Vec3::new(10.0, 0.0, 0.0))
+            .expect("expected move_character to find the registered character");
+
+        assert!(
+            result.translation.x > 5.0,
+            "expected a sensor collider to NOT block movement, got translation.x={}",
             result.translation.x
         );
     }

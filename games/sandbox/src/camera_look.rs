@@ -25,7 +25,10 @@ pub fn camera_look_system(args: &mut SystemArgs) -> Result<(), SystemError> {
 
     for (_, follow) in args.world.query::<&mut CameraFollow>().iter() {
         follow.yaw -= delta.dx * follow.sensitivity;
-        follow.pitch = (follow.pitch - delta.dy * follow.sensitivity)
+        // `+=`, not `-=`: confirmed inverted on a real mouse (see this
+        // function's own history) — moving the mouse up should pitch the
+        // camera up (look down at the target from higher above), not down.
+        follow.pitch = (follow.pitch + delta.dy * follow.sensitivity)
             .clamp(follow.pitch_min, follow.pitch_max);
     }
     Ok(())
