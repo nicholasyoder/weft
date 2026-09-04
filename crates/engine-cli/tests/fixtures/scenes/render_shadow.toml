@@ -1,0 +1,46 @@
+[[entity]]
+name = "camera"
+
+[entity.components.Transform]
+position = [2.5, 2.0, 4.0]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "cube"
+
+[entity.components.Transform]
+position = [0.0, 0.5, 0.0]
+
+[entity.components.MeshRef]
+mesh = "cube"
+
+[entity.components.Material]
+color = [0.8, 0.8, 0.8]
+
+[[entity]]
+name = "ground"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.MeshRef]
+mesh = "plane"
+
+[entity.components.Material]
+color = [0.6, 0.6, 0.65]
+
+[[entity]]
+name = "sun"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.Light]
+type = "directional"
+direction = [-0.6, -0.6, -0.3]
+color = [1.0, 1.0, 1.0]
+intensity = 1.0
+casts_shadow = true

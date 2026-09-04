@@ -35,11 +35,31 @@ struct GpuLight {
 
 struct Lights {
     lights: array<GpuLight, MAX_LIGHTS>,
+    // Light-space view-projection matrix for the scene's shadow-casting
+    // light (Phase 5) — meaningless when `shadow_caster_index < 0`.
+    shadow_view_proj: mat4x4<f32>,
     count: u32,
+    // Index into `lights` of the shadow caster, or -1 if the scene has none.
+    shadow_caster_index: i32,
 };
 
 @group(2) @binding(0)
 var<uniform> lights: Lights;
+// Shadow map (Phase 5) — shares this bind group rather than adding a 4th,
+// which would exceed wgpu's confirmed default `max_bind_groups` limit on
+// the skinned pipeline (already at 4).
+@group(2) @binding(1)
+var shadow_map: texture_depth_2d;
+@group(2) @binding(2)
+var shadow_sampler: sampler_comparison;
+
+// Depth bias subtracted from the comparison reference depth, to avoid
+// self-shadowing ("shadow acne") at the shadow map's finite resolution.
+// Small relative to the [0,1] NDC range spanned by `SHADOW_NEAR`..`SHADOW_FAR`
+// (`gpu.rs`) — a bias even a few times larger than this erodes genuinely
+// shadowed regions where a grazing light ray only clips a shallow depth of
+// the occluder (e.g. near a shadow's silhouette edge).
+const SHADOW_BIAS: f32 = 0.0015;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -172,8 +192,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let falloff = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
             attenuation = (falloff * falloff) / (dist * dist);
         }
+        var visibility = 1.0;
+        if i32(i) == lights.shadow_caster_index {
+            let shadow_clip = lights.shadow_view_proj * vec4<f32>(in.world_position, 1.0);
+            let shadow_uv = shadow_clip.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+            visibility = textureSampleCompare(
+                shadow_map, shadow_sampler, shadow_uv, shadow_clip.z - SHADOW_BIAS
+            );
+        }
+
         let contribution = shade_light(n, v, l, base_color.rgb, roughness, metallic);
-        direct += contribution * light.color_intensity.rgb * light.color_intensity.w * attenuation;
+        direct +=
+            contribution * light.color_intensity.rgb * light.color_intensity.w * attenuation
+                * visibility;
     }
 
     let ambient = 0.15 * base_color.rgb;

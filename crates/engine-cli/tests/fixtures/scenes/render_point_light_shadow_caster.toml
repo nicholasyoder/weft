@@ -1,0 +1,22 @@
+[[entity]]
+name = "camera"
+
+[entity.components.Transform]
+position = [2.5, 2.0, 4.0]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "lamp"
+
+[entity.components.Transform]
+position = [0.0, 2.0, 0.0]
+
+[entity.components.Light]
+type = "point"
+range = 8.0
+color = [1.0, 1.0, 1.0]
+intensity = 6.0
+casts_shadow = true

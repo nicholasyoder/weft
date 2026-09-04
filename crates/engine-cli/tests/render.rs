@@ -21,6 +21,8 @@ const NORMAL_MAP_GOLDEN: &str = "tests/fixtures/scenes/render_normal_map.golden.
 const NORMAL_MAP_ASSETS_DIR: &str = "tests/fixtures/assets";
 const MULTI_LIGHT_SCENE: &str = "tests/fixtures/scenes/render_multi_light.toml";
 const MULTI_LIGHT_GOLDEN: &str = "tests/fixtures/scenes/render_multi_light.golden.png";
+const SHADOW_SCENE: &str = "tests/fixtures/scenes/render_shadow.toml";
+const SHADOW_GOLDEN: &str = "tests/fixtures/scenes/render_shadow.golden.png";
 
 /// Per-channel tolerance for the golden-image comparison. Not blind byte
 /// equality: `lavapipe`/Mesa version drift across machines can shift
@@ -281,6 +283,73 @@ fn render_of_a_multi_light_scene_matches_golden_image_within_tolerance() {
         images_match_within_tolerance(&fresh, &golden),
         "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
     );
+}
+
+/// A cube casting a visible shadow onto the ground plane below it — the
+/// concrete proof the shadow-map pass actually darkens occluded fragments
+/// through the real binary, not just `extract_scene`'s unit coverage (see
+/// Phase 5 / ADR-0019).
+#[test]
+fn render_of_a_shadow_casting_scene_matches_golden_image_within_tolerance() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            SHADOW_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(SHADOW_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
+#[test]
+fn rendering_a_scene_with_more_than_one_shadow_caster_is_a_structured_error() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            "tests/fixtures/scenes/render_multiple_shadow_casters.toml",
+            "--to",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("RENDER_MULTIPLE_SHADOW_CASTERS"));
+}
+
+#[test]
+fn rendering_a_scene_with_a_point_light_shadow_caster_is_a_structured_error() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            "tests/fixtures/scenes/render_point_light_shadow_caster.toml",
+            "--to",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "RENDER_UNSUPPORTED_SHADOW_CASTER",
+        ));
 }
 
 #[test]

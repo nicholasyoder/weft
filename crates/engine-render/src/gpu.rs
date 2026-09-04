@@ -54,9 +54,26 @@ struct GpuLight {
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Lights {
     lights: [GpuLight; MAX_LIGHTS],
+    /// The shadow caster's light-space view-projection matrix (Phase 5) —
+    /// meaningless when `shadow_caster_index < 0`.
+    shadow_view_proj: [[f32; 4]; 4],
     count: u32,
-    _pad: [u32; 3],
+    /// Index into `lights` of the scene's shadow-casting light, or `-1` if
+    /// none. `extract_scene` guarantees at most one.
+    shadow_caster_index: i32,
+    _pad: [u32; 2],
 }
+
+/// Fixed-resolution square shadow map — independent of the output
+/// width/height a given `draw()` call renders at, so (unlike the main depth
+/// buffer) it's built once in `RenderContext::from_core`, not per frame.
+const SHADOW_MAP_SIZE: u32 = 2048;
+/// Half-width/height of the shadow caster's orthographic frustum, centered
+/// on the main camera's look-at target. Not scene-bounds-fitted or
+/// cascaded — a deliberate, named scoping limit (see Phase 5).
+const SHADOW_ORTHO_HALF_EXTENT: f32 = 10.0;
+const SHADOW_NEAR: f32 = 0.1;
+const SHADOW_FAR: f32 = 30.0;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -286,8 +303,23 @@ pub struct RenderContext {
     // Lights (Phase 4) — one shared bind group carrying every light in the
     // scene, rebuilt once per `draw()` call (not per-drawable, the first
     // genuinely per-frame-not-per-drawable buffer in this file). Shared by
-    // both the plain and skinned pipelines.
+    // both the plain and skinned pipelines. Since Phase 5 this layout also
+    // carries the shadow map texture/sampler (bindings 1/2) — adding a
+    // fourth bind group for them would exceed wgpu's confirmed default
+    // `max_bind_groups` limit on the skinned pipeline, already at 4.
     lights_bind_group_layout: wgpu::BindGroupLayout,
+    // Shadow map render pass (Phase 5) — depth-only, fixed resolution
+    // (`SHADOW_MAP_SIZE`), so unlike `pipelines`/`skinned_pipelines` above
+    // this doesn't need a per-color-format `HashMap`: built once here, not
+    // per `draw()` call (the shadow map's size never depends on the output
+    // surface's width/height the way the main depth buffer does). The
+    // shader/pipeline-layouts that build these pipelines aren't kept —
+    // unlike `pipeline_layout`, nothing rebuilds a shadow pipeline lazily
+    // per format, so once built there's no further use for them.
+    shadow_pipeline: wgpu::RenderPipeline,
+    skinned_shadow_pipeline: wgpu::RenderPipeline,
+    shadow_map_view: wgpu::TextureView,
+    shadow_sampler: wgpu::Sampler,
     core: GraphicsCore,
 }
 
@@ -423,6 +455,49 @@ fn build_pipeline(
     })
 }
 
+/// Depth-only twin of `build_pipeline` (Phase 5): no fragment stage at all
+/// (`fragment: None` — valid per `RenderPipelineDescriptor`, confirmed for a
+/// pass with no color attachments), so it can't share `build_pipeline`
+/// itself without several dead parameters (format/blend/cull_mode all stop
+/// applying to a shadow pass).
+fn build_shadow_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    entry_point: &str,
+    vertex_buffer_layout: wgpu::VertexBufferLayout,
+    bias: wgpu::DepthBiasState,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(entry_point),
+            buffers: &[Some(vertex_buffer_layout)],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: None,
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias,
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl RenderContext {
     pub fn new_headless(backends: wgpu::Backends) -> Result<Self, RenderError> {
         Self::from_core(GraphicsCore::new_headless(backends)?)
@@ -503,20 +578,41 @@ impl RenderContext {
         // Lights (Phase 4) — one uniform buffer entry, fragment-only (no
         // vertex-stage light math). Shared by the plain and skinned
         // pipelines; the skinned pipeline lands at exactly 4 bind groups
-        // with this added, wgpu's confirmed default `max_bind_groups`.
+        // with this added, wgpu's confirmed default `max_bind_groups`. Since
+        // Phase 5 this same group also carries the shadow map texture
+        // (binding 1) and its comparison sampler (binding 2) — a 5th bind
+        // group would exceed that same limit.
         let lights_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("weft-lights-layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                ],
             });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -560,6 +656,82 @@ impl RenderContext {
                 ],
                 immediate_size: 0,
             });
+
+        // Shadow map render pass (Phase 5). `shadow_pipeline_layout` reuses
+        // `bind_group_layout` as-is (group 0) — the shadow pass fills the
+        // same per-drawable `Uniforms` buffer with the light's `view_proj`
+        // instead of the camera's, needing no new bind-group-layout shape.
+        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("weft-shadow-shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shadow_shader.wgsl").into()),
+        });
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("weft-shadow-pipeline-layout"),
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
+            });
+        let skinned_shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("weft-skinned-shadow-pipeline-layout"),
+                bind_group_layouts: &[Some(&bind_group_layout), Some(&joint_bind_group_layout)],
+                immediate_size: 0,
+            });
+        // No rasterization-level depth bias here — deliberately. A
+        // shadow-pass `DepthBiasState` shifts every occluder's *stored*
+        // depth uniformly (in NDC units, translated to a comparatively huge
+        // world-space offset by this pass's wide `SHADOW_FAR`/`SHADOW_NEAR`
+        // range), which erodes genuinely-shadowed regions where a grazing
+        // light ray only clips a shallow depth of the occluder (confirmed
+        // empirically: even wgpu's small default-scale bias values washed
+        // out most of a test shadow's silhouette). `fs_main`'s own
+        // `SHADOW_BIAS` — a fixed, small comparison-depth offset applied
+        // once at the receiver, not compounded per rasterized occluder
+        // fragment — is the only bias needed against acne here.
+        let shadow_bias = wgpu::DepthBiasState::default();
+        let shadow_pipeline = build_shadow_pipeline(
+            device,
+            "weft-shadow-pipeline",
+            &shadow_pipeline_layout,
+            &shadow_shader,
+            "vs_main",
+            vertex_layout(),
+            shadow_bias,
+        );
+        let skinned_shadow_pipeline = build_shadow_pipeline(
+            device,
+            "weft-skinned-shadow-pipeline",
+            &skinned_shadow_pipeline_layout,
+            &shadow_shader,
+            "vs_main_skinned",
+            skinned_vertex_layout(),
+            shadow_bias,
+        );
+        let shadow_map = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("weft-shadow-map"),
+            size: wgpu::Extent3d {
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_map_view = shadow_map.create_view(&wgpu::TextureViewDescriptor::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("weft-shadow-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
 
         let cube_buffers = upload_mesh(device, &mesh::cube());
         let plane_buffers = upload_mesh(device, &mesh::plane());
@@ -654,6 +826,10 @@ impl RenderContext {
             default_atlas,
             font_cache: LruCache::new(CACHE_CAPACITY),
             lights_bind_group_layout,
+            shadow_pipeline,
+            skinned_shadow_pipeline,
+            shadow_map_view,
+            shadow_sampler,
         })
     }
 
@@ -768,6 +944,157 @@ impl RenderContext {
         let ui_pipeline = self.ui_pipeline_for(color_format);
         let asset_store = engine_assets::AssetStore::new(assets_dir);
 
+        // Shadow map pass (Phase 5) — recorded first, into `self.shadow_map_view`,
+        // so the main pass below can sample it. Skipped (map left cleared to
+        // 1.0 / "unoccluded") when the scene has no shadow caster, keeping a
+        // zero-shadow-caster scene's GPU work close to what it was before
+        // this phase.
+        let mut shadow_state = Vec::with_capacity(drawables.len());
+        let mut shadow_joint_buffers: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("weft-shadow-pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_map_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            if lights.shadow_caster_index >= 0 {
+                for drawable in drawables {
+                    let uniforms = Uniforms {
+                        view_proj: lights.shadow_view_proj,
+                        model: drawable.transform.to_matrix().to_cols_array_2d(),
+                        color: [0.0; 4],
+                        material: [0.0; 4],
+                        camera_pos: [0.0; 4],
+                    };
+                    let uniform_buffer =
+                        self.core
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("weft-shadow-draw-uniforms"),
+                                contents: bytemuck::bytes_of(&uniforms),
+                                usage: wgpu::BufferUsages::UNIFORM,
+                            });
+                    let bind_group =
+                        self.core
+                            .device
+                            .create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("weft-shadow-draw-bind-group"),
+                                layout: &self.bind_group_layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: uniform_buffer.as_entire_binding(),
+                                }],
+                            });
+                    shadow_state.push((uniform_buffer, bind_group));
+                    let (_, bind_group) = shadow_state.last().unwrap();
+
+                    let skinned = match (&drawable.mesh, &drawable.skin, &drawable.joint_matrices) {
+                        (MeshKind::Asset(mesh_hash), Some(skin_hash), Some(matrices)) => Some((
+                            mesh_hash.clone(),
+                            skin_hash.clone(),
+                            drawable.tangent.clone(),
+                            matrices,
+                        )),
+                        _ => None,
+                    };
+
+                    if let Some((mesh_hash, skin_hash, tangent_hash, matrices)) = skinned {
+                        let key = (mesh_hash, skin_hash, tangent_hash);
+                        if !self.skin_cache.contains(&key) {
+                            let buffers = load_skinned_mesh_buffers(
+                                &key.0,
+                                &key.1,
+                                key.2.as_deref(),
+                                &self.core.device,
+                                &asset_store,
+                            )?;
+                            self.skin_cache.put(key.clone(), buffers);
+                        }
+                        let (vertex_buffer, index_buffer, index_count) =
+                            self.skin_cache.get(&key).unwrap();
+
+                        let joint_buffer = self.core.device.create_buffer_init(
+                            &wgpu::util::BufferInitDescriptor {
+                                label: Some("weft-shadow-joint-matrices"),
+                                contents: bytemuck::cast_slice(matrices.as_slice()),
+                                usage: wgpu::BufferUsages::STORAGE,
+                            },
+                        );
+                        let joint_bind_group =
+                            self.core
+                                .device
+                                .create_bind_group(&wgpu::BindGroupDescriptor {
+                                    label: Some("weft-shadow-joint-bind-group"),
+                                    layout: &self.joint_bind_group_layout,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: joint_buffer.as_entire_binding(),
+                                    }],
+                                });
+                        shadow_joint_buffers.push((joint_buffer, joint_bind_group));
+                        let (_, joint_bind_group) = shadow_joint_buffers.last().unwrap();
+
+                        pass.set_pipeline(&self.skinned_shadow_pipeline);
+                        pass.set_bind_group(0, bind_group, &[]);
+                        pass.set_bind_group(1, joint_bind_group, &[]);
+                        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..*index_count, 0, 0..1);
+                        continue;
+                    }
+
+                    let (vertex_buffer, index_buffer, index_count) = match &drawable.mesh {
+                        MeshKind::Cube => (
+                            &self.cube_buffers.0,
+                            &self.cube_buffers.1,
+                            self.cube_buffers.2,
+                        ),
+                        MeshKind::Plane => (
+                            &self.plane_buffers.0,
+                            &self.plane_buffers.1,
+                            self.plane_buffers.2,
+                        ),
+                        MeshKind::Sphere => (
+                            &self.sphere_buffers.0,
+                            &self.sphere_buffers.1,
+                            self.sphere_buffers.2,
+                        ),
+                        MeshKind::Asset(hash) => {
+                            let key = (hash.clone(), drawable.tangent.clone());
+                            if !self.mesh_cache.contains(&key) {
+                                let buffers = load_mesh_buffers(
+                                    hash,
+                                    drawable.tangent.as_deref(),
+                                    &self.core.device,
+                                    &asset_store,
+                                )?;
+                                self.mesh_cache.put(key.clone(), buffers);
+                            }
+                            let (vb, ib, count) = self.mesh_cache.get(&key).unwrap();
+                            (vb, ib, *count)
+                        }
+                    };
+
+                    pass.set_pipeline(&self.shadow_pipeline);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..index_count, 0, 0..1);
+                }
+            }
+        }
+
         // Built once per frame, not per-drawable — see `lights_bind_group_layout`'s
         // own doc comment. Pooling this buffer across frames is Phase 6's job.
         let lights_buffer =
@@ -784,10 +1111,20 @@ impl RenderContext {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("weft-lights-bind-group"),
                 layout: &self.lights_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: lights_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: lights_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.shadow_map_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                    },
+                ],
             });
 
         let mut per_draw_state = Vec::with_capacity(drawables.len());
@@ -1125,6 +1462,32 @@ fn make_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Text
 /// `extract_scene`'s own callers for how each element is used.
 type ExtractedScene = (Mat4, Vec3, Vec<Drawable>, Vec<TextDrawable>, Lights);
 
+/// The shadow-casting directional light's light-space view-projection
+/// matrix: an orthographic frustum of fixed half-extent, centered on the
+/// main camera's look-at `target` — not scene-bounds-fitted or cascaded, a
+/// deliberate, named scoping limit (see Phase 5 / `visual-realism-plan.md`).
+fn shadow_view_proj_for(direction: Vec3, target: Vec3) -> Mat4 {
+    let dir = direction.normalize();
+    // A look-at view needs an up vector not parallel to `dir` — `Y` fails
+    // for a near-straight-down/up light, so fall back to `X`.
+    let up = if dir.dot(Vec3::Y).abs() > 0.99 {
+        Vec3::X
+    } else {
+        Vec3::Y
+    };
+    let eye = target - dir * (SHADOW_FAR * 0.5);
+    let view = glam::camera::rh::view::look_at_mat4(eye, target, up);
+    let proj = glam::camera::rh::proj::directx::orthographic(
+        -SHADOW_ORTHO_HALF_EXTENT,
+        SHADOW_ORTHO_HALF_EXTENT,
+        -SHADOW_ORTHO_HALF_EXTENT,
+        SHADOW_ORTHO_HALF_EXTENT,
+        SHADOW_NEAR,
+        SHADOW_FAR,
+    );
+    proj * view
+}
+
 fn extract_scene(
     world: &hecs::World,
     width: u32,
@@ -1196,11 +1559,31 @@ fn extract_scene(
         return Err(RenderError::TooManyLights(scene_lights.len()));
     }
 
+    // Shadow caster validation (Phase 5) — at most one `Light` may set
+    // `casts_shadow`, and it must be `Directional` (point-light shadows are
+    // out of scope, see `Light`'s doc comment).
+    let shadow_caster_count = scene_lights
+        .iter()
+        .filter(|(_, _, l)| l.casts_shadow)
+        .count();
+    if shadow_caster_count > 1 {
+        return Err(RenderError::MultipleShadowCasters(shadow_caster_count));
+    }
+    if let Some((_, _, light)) = scene_lights.iter().find(|(_, _, l)| l.casts_shadow) {
+        if !matches!(light.kind, LightKind::Directional { .. }) {
+            return Err(RenderError::UnsupportedShadowCaster);
+        }
+    }
+
     let mut gpu_lights = [GpuLight {
         pos_or_dir: [0.0; 4],
         color_intensity: [0.0; 4],
         range: [0.0; 4],
     }; MAX_LIGHTS];
+    // Index into `gpu_lights` of the shadow caster, or `-1` if none — the
+    // synthesized zero-light fallback below never casts a shadow.
+    let mut shadow_caster_index: i32 = -1;
+    let mut shadow_view_proj = Mat4::IDENTITY.to_cols_array_2d();
     let light_count = if scene_lights.is_empty() {
         // No `Light` entity anywhere in the scene — synthesize one fallback
         // directional light matching the pre-Phase-4 hardcoded look exactly,
@@ -1241,13 +1624,22 @@ fn extract_scene(
                     range: [range, 0.0, 0.0, 0.0],
                 },
             };
+            if light.casts_shadow {
+                shadow_caster_index = i as i32;
+                if let LightKind::Directional { direction } = light.kind {
+                    shadow_view_proj =
+                        shadow_view_proj_for(direction, camera.target).to_cols_array_2d();
+                }
+            }
         }
         count
     };
     let lights = Lights {
         lights: gpu_lights,
+        shadow_view_proj,
         count: light_count as u32,
-        _pad: [0; 3],
+        shadow_caster_index,
+        _pad: [0; 2],
     };
 
     let aspect = width as f32 / height as f32;
@@ -1796,6 +2188,7 @@ mod tests {
                     kind: LightKind::Point { range: 5.0 },
                     color: [1.0, 1.0, 1.0],
                     intensity: 1.0,
+                    casts_shadow: false,
                 },
             ));
         }
@@ -1820,6 +2213,7 @@ mod tests {
                 kind: LightKind::Point { range: 1.0 },
                 color: [1.0, 0.0, 0.0],
                 intensity: 1.0,
+                casts_shadow: false,
             },
         ));
         world.spawn((
@@ -1828,6 +2222,7 @@ mod tests {
                 kind: LightKind::Point { range: 2.0 },
                 color: [0.0, 1.0, 0.0],
                 intensity: 2.0,
+                casts_shadow: false,
             },
         ));
 
@@ -1835,5 +2230,68 @@ mod tests {
         assert_eq!(lights.count, 2);
         assert_eq!(lights.lights[0].color_intensity, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(lights.lights[1].color_intensity, [0.0, 1.0, 0.0, 2.0]);
+    }
+
+    fn directional_light(casts_shadow: bool) -> Light {
+        Light {
+            kind: LightKind::Directional {
+                direction: Vec3::new(-0.2, -1.0, -0.1),
+            },
+            color: [1.0, 1.0, 1.0],
+            intensity: 1.0,
+            casts_shadow,
+        }
+    }
+
+    /// More than one `casts_shadow: true` `Light` in one scene is a
+    /// structured error, not "last one wins" or a silent pick.
+    #[test]
+    fn more_than_one_shadow_caster_is_a_structured_error() {
+        let mut world = hecs::World::new();
+        world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
+        world.spawn((Transform::default(), directional_light(true)));
+        world.spawn((Transform::default(), directional_light(true)));
+
+        let err = match extract_scene(&world, 16, 16) {
+            Err(e) => e,
+            Ok(_) => panic!("expected RenderError::MultipleShadowCasters"),
+        };
+        assert_eq!(err.code(), "RENDER_MULTIPLE_SHADOW_CASTERS");
+    }
+
+    /// A `casts_shadow: true` `Point` light is a structured error — point-
+    /// light shadows aren't supported (see `Light`'s doc comment).
+    #[test]
+    fn a_point_light_shadow_caster_is_a_structured_error() {
+        let mut world = hecs::World::new();
+        world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
+        world.spawn((
+            Transform::default(),
+            Light {
+                kind: LightKind::Point { range: 5.0 },
+                color: [1.0, 1.0, 1.0],
+                intensity: 1.0,
+                casts_shadow: true,
+            },
+        ));
+
+        let err = match extract_scene(&world, 16, 16) {
+            Err(e) => e,
+            Ok(_) => panic!("expected RenderError::UnsupportedShadowCaster"),
+        };
+        assert_eq!(err.code(), "RENDER_UNSUPPORTED_SHADOW_CASTER");
+    }
+
+    /// A scene with no `casts_shadow: true` light (including the zero-light
+    /// fallback case) must leave `shadow_caster_index` at the "none" sentinel,
+    /// so the shader's shadow branch never runs.
+    #[test]
+    fn zero_shadow_casters_leaves_shadow_caster_index_at_minus_one() {
+        let mut world = hecs::World::new();
+        world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
+        world.spawn((Transform::default(), directional_light(false)));
+
+        let (_, _, _, _, lights) = extract_scene(&world, 16, 16).unwrap();
+        assert_eq!(lights.shadow_caster_index, -1);
     }
 }

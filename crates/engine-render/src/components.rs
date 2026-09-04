@@ -123,12 +123,21 @@ pub enum LightKind {
 /// rendering under a synthesized fallback directional light matching the
 /// engine's old hardcoded look, so no pre-existing scene file needs
 /// updating.
+///
+/// `casts_shadow` (Phase 5) opts one light into casting shadows via a
+/// depth-only shadow-map pass. At most one light may set it —  a second is
+/// `RenderError::MultipleShadowCasters` — and it must be a `Directional`
+/// light — a `Point` shadow caster is `RenderError::UnsupportedShadowCaster`
+/// (point-light shadows need a 6-pass cubemap, no concrete consumer yet).
+/// Defaults to `false` so no pre-existing scene file needs updating.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Light {
     #[serde(flatten)]
     pub kind: LightKind,
     pub color: [f32; 3],
     pub intensity: f32,
+    #[serde(default)]
+    pub casts_shadow: bool,
 }
 
 /// Screen-space HUD text — no `Transform`, since this is 2D UI, not a 3D
@@ -187,6 +196,7 @@ mod tests {
             },
             color: [1.0, 1.0, 1.0],
             intensity: 1.0,
+            casts_shadow: true,
         };
         let json = serde_json::to_value(directional).unwrap();
         let back: Light = serde_json::from_value(json).unwrap();
@@ -196,9 +206,24 @@ mod tests {
             kind: LightKind::Point { range: 10.0 },
             color: [1.0, 0.2, 0.2],
             intensity: 2.0,
+            casts_shadow: false,
         };
         let json = serde_json::to_value(point).unwrap();
         let back: Light = serde_json::from_value(json).unwrap();
         assert_eq!(back, point);
+    }
+
+    /// A pre-Phase-5 scene file's `Light` table has no `casts_shadow` key —
+    /// it must still deserialize, defaulting to `false`.
+    #[test]
+    fn light_without_casts_shadow_field_defaults_to_false() {
+        let json = serde_json::json!({
+            "type": "directional",
+            "direction": [0.0, -1.0, 0.0],
+            "color": [1.0, 1.0, 1.0],
+            "intensity": 1.0,
+        });
+        let light: Light = serde_json::from_value(json).unwrap();
+        assert!(!light.casts_shadow);
     }
 }

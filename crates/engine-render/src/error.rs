@@ -8,6 +8,14 @@ pub enum RenderError {
     MultipleCameras(usize),
     #[error("scene has {0} Light entities — at most {MAX_LIGHTS} are supported per scene")]
     TooManyLights(usize),
+    #[error(
+        "scene has {0} Light entities with casts_shadow = true — at most 1 is supported per scene"
+    )]
+    MultipleShadowCasters(usize),
+    #[error(
+        "the scene's shadow-casting Light must be a directional light — point-light shadows aren't supported"
+    )]
+    UnsupportedShadowCaster,
     #[error("failed to find a compatible GPU adapter: {0}")]
     AdapterRequestFailed(String),
     #[error("failed to create a GPU device: {0}")]
@@ -44,6 +52,8 @@ impl RenderError {
             Self::NoCamera => "RENDER_NO_CAMERA",
             Self::MultipleCameras(_) => "RENDER_MULTIPLE_CAMERAS",
             Self::TooManyLights(_) => "RENDER_TOO_MANY_LIGHTS",
+            Self::MultipleShadowCasters(_) => "RENDER_MULTIPLE_SHADOW_CASTERS",
+            Self::UnsupportedShadowCaster => "RENDER_UNSUPPORTED_SHADOW_CASTER",
             Self::AdapterRequestFailed(_) => "RENDER_ADAPTER_ERROR",
             Self::DeviceRequestFailed(_) => "RENDER_DEVICE_ERROR",
             Self::ReadbackFailed(_) => "RENDER_READBACK_ERROR",
