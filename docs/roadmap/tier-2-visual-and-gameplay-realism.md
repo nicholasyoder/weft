@@ -22,18 +22,19 @@ The one directional light that exists is a hardcoded constant in `gpu.rs`, not a
 
 No shadow pass exists yet. Natural to sequence after multi-light support lands, since a shadow implementation needs to decide which light(s) actually cast shadows.
 
-## Physics gameplay substrate
+## Physics gameplay substrate — **done** (2026-09-03)
 
-**See [`physics-substrate-plan.md`](physics-substrate-plan.md) for the active phased plan tackling this item.**
+See [ADR-0018](../decisions/0018-physics-gameplay-substrate.md) for the full design record (the phased plan that built this, `physics-substrate-plan.md`, is retired — `git log`/the ADR are its permanent record, same pattern `debt-cleanup-plan.md` used).
 
-`engine-physics` proves basic dynamics work — the sandbox's rolling ball is real — but exposes almost none of the query/gameplay surface real levels and encounters need:
+`PhysicsState` now exposes raycasts (`cast_ray`), sensor overlap queries (`overlapping`), and a kinematic character-controller mechanism (`move_character`); `Collider` gained `sensor`/`membership`/`filter`; `ColliderShape` gained `Capsule`; `BodyType` gained `KinematicPositionBased`. `games/sandbox`'s player is a real capsule character controller (WASD + jump, wall sliding, ground snapping) instead of a force-driven rolling sphere, and its pickups are real sensor triggers instead of hand-rolled distance math.
 
-- **Raycast / shape-cast queries** — `PhysicsState` exposes `apply_force` only today; no way to ask "what's in front of me" or "what's under this point."
-- **Triggers / sensors** — no overlap-without-collision mode exists.
-- **Collision layers / filtering** — `Collider` has no group/membership/filter fields.
-- **Character controller** — not built; the sandbox drives its ball with raw forces, not anything resembling a controller.
-- **Kinematic bodies** — deferred explicitly in `RigidBody`'s own doc comment (nothing drives a body's pose externally yet). Needed for moving platforms and pairs naturally with a character controller.
-- **Capsule colliders** — box and sphere only today; capsule is the natural shape for a character controller.
+**Still open, not silently lost:**
+
+- **Velocity-based kinematic bodies** — only position-based kinematics exist; no concrete consumer has needed "set a velocity, let rapier integrate it" yet.
+- **A generic Lua-exposed shape-cast** — `engine.raycast` exists; a swept-shape query (as opposed to a point ray) does not.
+- **Scene-authorable character-controller tuning** — `KinematicCharacterController::default()`'s fixed tuning (no autostep, 45° slope limits) isn't exposed as scene fields yet; revisit when a ramp/staircase/moving-platform case needs it.
+- **A named collision-layer registry** — `Collider.membership`/`filter` are raw `u32` bitmasks, not named layers.
+- **A proper capsule mesh** — the sandbox player's visual is still a `sphere` mesh scaled into an ellipsoid approximating the capsule collider; `engine-render` has no dedicated capsule primitive. Purely cosmetic (the physics settles correctly), Tier 3 polish.
 
 ## Multi-mesh / multi-part asset import
 

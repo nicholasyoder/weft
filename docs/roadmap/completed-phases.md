@@ -258,3 +258,20 @@ Real friction hit, worth recording since it'll recur for the next asset too: thi
 
 **Re-evaluation checkpoint, done**: the offscreen-vs-live split established for rendering (ADR-0004/0010) generalized cleanly to audio, but not exactly as planned — the `MockBackend` gap is a concrete instance of this project's own practice of re-evaluating a decision once real implementation contradicts it, not treating the approved plan as fixed once a spike showed it wouldn't work as expected.
 
+---
+
+## Phase 15 — Physics gameplay substrate — **done** (2026-09-03)
+
+**Goal**: close Tier 2's "Physics gameplay substrate" item — the sandbox's rolling ball proved basic dynamics worked, but `PhysicsState` exposed only `apply_force`, `BodyType`/`ColliderShape` covered `Dynamic`/`Fixed` and `Box`/`Sphere` only, and nothing resembled a character controller, sensor trigger, raycast, or kinematic body.
+
+- Capsule collider + `KinematicPositionBased` bodies + `Entity ↔ ColliderHandle` bookkeeping. — **done**
+- Collision groups/filtering (`Collider.membership`/`filter`, raw `u32` bitmasks) + poll-based sensor overlap queries (`PhysicsState::overlapping`, `engine.overlapping()`). — **done**
+- Raycast queries (`PhysicsState::cast_ray`, `engine.raycast()`), an engine-native `RaycastHit` never leaking a raw rapier type. — **done**
+- A kinematic character-controller mechanism (`PhysicsState::move_character`, wrapping `rapier3d::control::KinematicCharacterController`). — **done**
+- Three sandbox proofs: a kinematic moving platform (`games/sandbox/src/moving_platform.rs`); pickups switched from hand-rolled distance math to real sensor triggers; the player rewritten from a force-driven sphere to a real capsule character controller (WASD + jump, wall sliding, ground snapping). — **done**
+- Velocity-based kinematic bodies, a generic Lua-exposed shape-cast, scene-authorable character-controller tuning, a named collision-layer registry, and a dedicated capsule render mesh (the sandbox player is still a `sphere` mesh scaled into an ellipsoid) — **not done, out of scope on purpose**, called out explicitly in [`tier-2-visual-and-gameplay-realism.md`](tier-2-visual-and-gameplay-realism.md#physics-gameplay-substrate---done-2026-09-03) so they aren't silently lost.
+
+**Definition of done**: proven through the real CLI/scene/live-play surface, not just crate-level unit tests. Met: `games/sandbox`'s `playground.toml` has a live moving platform, sensor-based pickups, and a capsule player all exercised in the real `engine play` loop under `xvfb-run`; `cargo test --workspace` reached 191 tests, clippy `-D warnings` and fmt both clean throughout all phases.
+
+**Implementation notes**: see [ADR-0018](../decisions/0018-physics-gameplay-substrate.md) for the full design record, including the alternatives rejected (velocity-based kinematics, a named-layer registry, event-channel sensors, per-entity character state on `PhysicsState` instead of as a component) and a real rapier gotcha found and permanently documented, not just worked around: registering a kinematic character's first pose in exact zero-gap contact with a surface hits a degenerate case in rapier's shape-cast TOI solver, causing small per-tick downward `move_character` calls to leak through indefinitely (unbounded sinking) instead of blocking cleanly — a real initial gap avoids it entirely, and the fix is documented directly on `PhysicsState::move_character`'s doc comment (`crates/engine-physics/src/character.rs`) so it isn't rediscovered from scratch. `games/sandbox`'s real player spawn was never at risk (it already spawned well above its resting height); only the test suite's convenience shortcut of spawning fixtures exactly at rest hit it. Planned and verified with the same discipline `debt-cleanup-plan.md` established: each of the plan's 8 phases landed as its own reviewable, full-gate-clean commit, with rapier APIs verified against the pinned `rapier3d = "0.35.3"` source in the local cargo registry cache rather than assumed from memory before being used in a plan.
+
