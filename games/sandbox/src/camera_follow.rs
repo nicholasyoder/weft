@@ -46,15 +46,18 @@ pub struct CameraFollow {
     pub look_offset: Vec3,
 }
 
-// Defaults reproduce the camera's original fixed offset ([0, 6, 8] behind
-// and above the target): distance = sqrt(6^2 + 8^2) = 10.0, pitch =
-// atan2(6, 8) ~= 0.6435 rad.
+// `pitch` reproduces the camera's original fixed offset's viewing angle
+// ([0, 6, 8] behind and above the target: atan2(6, 8) ~= 0.6435 rad).
+// `distance` was originally the offset's own magnitude (sqrt(6^2 + 8^2) =
+// 10.0) but was pulled in to 6.0 after playtesting found the default too
+// far away, especially now the player is a full-size humanoid rather than
+// a small ellipsoid — same pitch angle, just closer.
 fn default_pitch() -> f32 {
     0.6435
 }
 
 fn default_distance() -> f32 {
-    10.0
+    6.0
 }
 
 fn default_sensitivity() -> f32 {

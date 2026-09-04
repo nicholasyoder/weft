@@ -263,9 +263,10 @@ position = [0.0, 9.0, 12.0]
 [entity.components.Camera]
 target = [0.0, 0.5, 0.0]
 [entity.components.CameraFollow]
-# All fields left at their defaults, which reproduce the original fixed
-# [0, 6, 8] offset as an orbit (yaw=0, pitch=atan2(6,8), distance=10) —
-# see CameraFollow's own field doc comments. Mouse motion (engine play's
+# All fields left at their defaults: yaw=0, pitch=atan2(6,8) (the original
+# fixed [0, 6, 8] offset's viewing angle), distance=6 (pulled in from the
+# offset's own 10-unit magnitude after playtesting found it too far away)
+# — see CameraFollow's own field doc comments. Mouse motion (engine play's
 # live loop only) updates yaw/pitch from here via "camera_look".
 
 [[entity]]
