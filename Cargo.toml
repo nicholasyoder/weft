@@ -48,3 +48,18 @@ winit = "0.30"
 kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "ogg", "vorbis", "pcm"] }
 hound = "3"
 lru = "0.18.3"
+
+# Local dev-loop speed: full debug info's cost (link time, target dir size)
+# outweighs its value here — this codebase surfaces failures as structured
+# JSON errors (see docs/decisions/0017-system-error-channel.md), not stack
+# traces, so line-tables-only panics/backtraces are enough. `cargo test`
+# inherits `[profile.dev]` unless `[profile.test]` overrides it, so this
+# covers test binaries too. Dependencies (wgpu, image, gltf, rapier3d, ...)
+# get opt-level 1 so render/mesh/physics-heavy tests run faster once
+# compiled, while this workspace's own crates stay at opt-level 0 for fast
+# incremental compiles during iteration.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1

@@ -13,7 +13,7 @@ Two equivalent surfaces exist, both thin wrappers over the same `engine_cli` lib
 cargo build --workspace
 ```
 
-`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all -- --check` must all stay clean — every phase in [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) has held to this gate.
+`cargo nextest run --workspace` (plus `cargo test --doc --workspace` — nextest doesn't run doc-tests), `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all -- --check` must all stay clean — every phase in [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) has held to this gate. `cargo-nextest` (`cargo install cargo-nextest --locked`) runs the workspace's many integration-test binaries through one shared thread pool instead of one-by-one — dramatically faster wall-clock than plain `cargo test` for this workspace's shape (~7s warm vs. 120s+); prefer it for local runs. `.github/workflows/ci.yml` runs this same full gate on every push/PR — during iterative work, scope local runs to the crate(s)/test file you're touching (`cargo nextest run -p <crate>` or `--test <file>`) for fast feedback, and lean on CI as the authoritative full-workspace gate rather than re-running everything locally before every push.
 
 ## The seven operations
 
