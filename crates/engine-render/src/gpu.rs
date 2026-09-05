@@ -92,6 +92,11 @@ struct Uniforms {
 }
 
 struct Drawable {
+    /// Identifies this drawable's ECS entity across frames — the key
+    /// `draw()`'s per-drawable buffer/bind-group pools (Phase 6) use to
+    /// reuse a stable GPU allocation instead of creating a fresh one every
+    /// frame.
+    entity: hecs::Entity,
     transform: Transform,
     mesh: MeshKind,
     color: [f32; 3],
@@ -290,6 +295,21 @@ pub struct RenderContext {
     // referenced with different skins, though `engine import` never
     // produces that today.
     skin_cache: LruCache<(String, String, Option<String>), MeshBuffers>,
+    // Per-entity pools (Phase 6) replacing what used to be a fresh
+    // `create_buffer_init` + `create_bind_group` per drawable every single
+    // `draw()` call — an existing entity's buffer is now updated in place
+    // via `queue.write_buffer`, and an entity no longer present in the
+    // current frame's drawable set is evicted at the end of `draw()`. Only
+    // pays off for the live/windowed path (a stable entity set across
+    // frames); one-shot/batch callers just don't get a "next frame" to
+    // amortize across, same caveat as every other cache in this file.
+    // `joint_pool` is shared by both the main pass and the shadow pass —
+    // both fill it from the exact same `JointPalette` matrices, so reusing
+    // one entry rather than keeping two (as the pre-Phase-6 code did)
+    // removes a redundant allocation, not just redundant bookkeeping.
+    uniform_pool: HashMap<hecs::Entity, (wgpu::Buffer, wgpu::BindGroup)>,
+    shadow_uniform_pool: HashMap<hecs::Entity, (wgpu::Buffer, wgpu::BindGroup)>,
+    joint_pool: HashMap<hecs::Entity, (wgpu::Buffer, wgpu::BindGroup)>,
     // UI/text pass — a second shader/pipeline (alpha-blended, depth-always)
     // reusing `texture_bind_group_layout`/`sampler` above for its glyph
     // atlas textures, since an R8Unorm atlas fits that same layout shape.
@@ -301,13 +321,17 @@ pub struct RenderContext {
     default_atlas: GlyphAtlas,
     font_cache: LruCache<String, GlyphAtlas>,
     // Lights (Phase 4) — one shared bind group carrying every light in the
-    // scene, rebuilt once per `draw()` call (not per-drawable, the first
-    // genuinely per-frame-not-per-drawable buffer in this file). Shared by
-    // both the plain and skinned pipelines. Since Phase 5 this layout also
-    // carries the shadow map texture/sampler (bindings 1/2) — adding a
-    // fourth bind group for them would exceed wgpu's confirmed default
-    // `max_bind_groups` limit on the skinned pipeline, already at 4.
-    lights_bind_group_layout: wgpu::BindGroupLayout,
+    // scene. Shared by both the plain and skinned pipelines. Since Phase 5
+    // this layout also carries the shadow map texture/sampler (bindings
+    // 1/2) — adding a fourth bind group for them would exceed wgpu's
+    // confirmed default `max_bind_groups` limit on the skinned pipeline,
+    // already at 4. Built once here, not per `draw()` call (Phase 6) —
+    // `shadow_map_view` was already stable across frames, and
+    // `lights_buffer` now is too (updated via `queue.write_buffer` each
+    // frame instead of recreated), so the bind group itself never needs to
+    // change shape frame to frame.
+    lights_buffer: wgpu::Buffer,
+    lights_bind_group: wgpu::BindGroup,
     // Shadow map render pass (Phase 5) — depth-only, fixed resolution
     // (`SHADOW_MAP_SIZE`), so unlike `pipelines`/`skinned_pipelines` above
     // this doesn't need a per-color-format `HashMap`: built once here, not
@@ -318,8 +342,12 @@ pub struct RenderContext {
     // per format, so once built there's no further use for them.
     shadow_pipeline: wgpu::RenderPipeline,
     skinned_shadow_pipeline: wgpu::RenderPipeline,
+    // Not a struct field: unlike `shadow_map_view` (read every frame in
+    // `draw()`), the sampler is only needed once, up front, to build
+    // `lights_bind_group` — wgpu's bind group holds its own internal
+    // refcount on the sampler resource, so nothing here needs to keep a
+    // Rust-level handle to it alive afterward.
     shadow_map_view: wgpu::TextureView,
-    shadow_sampler: wgpu::Sampler,
     core: GraphicsCore,
 }
 
@@ -496,6 +524,53 @@ fn build_shadow_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// Looks up `entity` in `pool`, updating its buffer's contents in place via
+/// `queue.write_buffer` when it already exists and is the right size, or
+/// creating a fresh buffer+bind-group (mirroring the pre-Phase-6
+/// `create_buffer_init`+`create_bind_group` shape exactly) when it doesn't —
+/// the one shared mechanism `draw()`'s per-drawable `Uniforms` pools
+/// (shadow-pass and main-pass) and its skinned joint-matrix pool all use.
+/// A size mismatch is never expected in practice (an entity's uniform
+/// struct size is fixed at compile time; a skinned entity's joint count is
+/// fixed by its skin, which doesn't change frame to frame) but falls back
+/// to a fresh allocation rather than risking a `write_buffer` panic.
+#[allow(clippy::too_many_arguments)]
+fn write_pooled_buffer<'a>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    pool: &'a mut HashMap<hecs::Entity, (wgpu::Buffer, wgpu::BindGroup)>,
+    entity: hecs::Entity,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> &'a wgpu::BindGroup {
+    let needs_new = match pool.get(&entity) {
+        Some((buffer, _)) => buffer.size() != contents.len() as u64,
+        None => true,
+    };
+    if needs_new {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+        pool.insert(entity, (buffer, bind_group));
+    } else {
+        let (buffer, _) = pool.get(&entity).unwrap();
+        queue.write_buffer(buffer, 0, contents);
+    }
+    &pool.get(&entity).unwrap().1
 }
 
 impl RenderContext {
@@ -798,6 +873,35 @@ impl RenderContext {
             text::DEFAULT_FONT_BYTES,
         )?;
 
+        // Built once, not per `draw()` call (Phase 6) — sized for the
+        // `Lights` struct up front and filled via `queue.write_buffer` every
+        // frame from here on, same as every other per-frame GPU resource
+        // this phase pools.
+        let lights_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("weft-lights-uniforms"),
+            size: std::mem::size_of::<Lights>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("weft-lights-bind-group"),
+            layout: &lights_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lights_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
+        });
+
         Ok(Self {
             core,
             shader,
@@ -819,17 +923,20 @@ impl RenderContext {
             skinned_pipeline_layout,
             skinned_pipelines: HashMap::new(),
             skin_cache: LruCache::new(CACHE_CAPACITY),
+            uniform_pool: HashMap::new(),
+            shadow_uniform_pool: HashMap::new(),
+            joint_pool: HashMap::new(),
             ui_shader,
             ui_bind_group_layout,
             ui_pipeline_layout,
             ui_pipelines: HashMap::new(),
             default_atlas,
             font_cache: LruCache::new(CACHE_CAPACITY),
-            lights_bind_group_layout,
+            lights_buffer,
+            lights_bind_group,
             shadow_pipeline,
             skinned_shadow_pipeline,
             shadow_map_view,
-            shadow_sampler,
         })
     }
 
@@ -949,8 +1056,6 @@ impl RenderContext {
         // 1.0 / "unoccluded") when the scene has no shadow caster, keeping a
         // zero-shadow-caster scene's GPU work close to what it was before
         // this phase.
-        let mut shadow_state = Vec::with_capacity(drawables.len());
-        let mut shadow_joint_buffers: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("weft-shadow-pass"),
@@ -977,27 +1082,16 @@ impl RenderContext {
                         material: [0.0; 4],
                         camera_pos: [0.0; 4],
                     };
-                    let uniform_buffer =
-                        self.core
-                            .device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("weft-shadow-draw-uniforms"),
-                                contents: bytemuck::bytes_of(&uniforms),
-                                usage: wgpu::BufferUsages::UNIFORM,
-                            });
-                    let bind_group =
-                        self.core
-                            .device
-                            .create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("weft-shadow-draw-bind-group"),
-                                layout: &self.bind_group_layout,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: uniform_buffer.as_entire_binding(),
-                                }],
-                            });
-                    shadow_state.push((uniform_buffer, bind_group));
-                    let (_, bind_group) = shadow_state.last().unwrap();
+                    let bind_group = write_pooled_buffer(
+                        &self.core.device,
+                        &self.core.queue,
+                        &self.bind_group_layout,
+                        &mut self.shadow_uniform_pool,
+                        drawable.entity,
+                        "weft-shadow-draw-uniforms",
+                        bytemuck::bytes_of(&uniforms),
+                        wgpu::BufferUsages::UNIFORM,
+                    );
 
                     let skinned = match (&drawable.mesh, &drawable.skin, &drawable.joint_matrices) {
                         (MeshKind::Asset(mesh_hash), Some(skin_hash), Some(matrices)) => Some((
@@ -1024,26 +1118,21 @@ impl RenderContext {
                         let (vertex_buffer, index_buffer, index_count) =
                             self.skin_cache.get(&key).unwrap();
 
-                        let joint_buffer = self.core.device.create_buffer_init(
-                            &wgpu::util::BufferInitDescriptor {
-                                label: Some("weft-shadow-joint-matrices"),
-                                contents: bytemuck::cast_slice(matrices.as_slice()),
-                                usage: wgpu::BufferUsages::STORAGE,
-                            },
+                        // Shared with the main pass below (Phase 6) — both
+                        // fill the same entity's slot from the identical
+                        // `matrices`, so whichever pass runs first creates
+                        // it and the other just reuses/rewrites it, rather
+                        // than each pass keeping its own copy.
+                        let joint_bind_group = write_pooled_buffer(
+                            &self.core.device,
+                            &self.core.queue,
+                            &self.joint_bind_group_layout,
+                            &mut self.joint_pool,
+                            drawable.entity,
+                            "weft-joint-matrices",
+                            bytemuck::cast_slice(matrices.as_slice()),
+                            wgpu::BufferUsages::STORAGE,
                         );
-                        let joint_bind_group =
-                            self.core
-                                .device
-                                .create_bind_group(&wgpu::BindGroupDescriptor {
-                                    label: Some("weft-shadow-joint-bind-group"),
-                                    layout: &self.joint_bind_group_layout,
-                                    entries: &[wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: joint_buffer.as_entire_binding(),
-                                    }],
-                                });
-                        shadow_joint_buffers.push((joint_buffer, joint_bind_group));
-                        let (_, joint_bind_group) = shadow_joint_buffers.last().unwrap();
 
                         pass.set_pipeline(&self.skinned_shadow_pipeline);
                         pass.set_bind_group(0, bind_group, &[]);
@@ -1095,40 +1184,13 @@ impl RenderContext {
             }
         }
 
-        // Built once per frame, not per-drawable — see `lights_bind_group_layout`'s
-        // own doc comment. Pooling this buffer across frames is Phase 6's job.
-        let lights_buffer =
-            self.core
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("weft-lights-uniforms"),
-                    contents: bytemuck::bytes_of(lights),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-        let lights_bind_group = self
-            .core
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("weft-lights-bind-group"),
-                layout: &self.lights_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: lights_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.shadow_map_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
-                    },
-                ],
-            });
+        // `lights_buffer`/`lights_bind_group` are both built once in
+        // `from_core`, not per `draw()` call (Phase 6) — only the buffer's
+        // contents change frame to frame.
+        self.core
+            .queue
+            .write_buffer(&self.lights_buffer, 0, bytemuck::bytes_of(lights));
 
-        let mut per_draw_state = Vec::with_capacity(drawables.len());
-        let mut joint_buffers: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
         let mut ui_buffers: Vec<(wgpu::Buffer, wgpu::Buffer, u32)> = Vec::new();
         let mut ui_uniform_state: Vec<(wgpu::Buffer, wgpu::BindGroup)> = Vec::new();
 
@@ -1175,26 +1237,16 @@ impl RenderContext {
                     ],
                     camera_pos: [camera_pos.x, camera_pos.y, camera_pos.z, 0.0],
                 };
-                let uniform_buffer =
-                    self.core
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("weft-draw-uniforms"),
-                            contents: bytemuck::bytes_of(&uniforms),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-                let bind_group = self
-                    .core
-                    .device
-                    .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("weft-draw-bind-group"),
-                        layout: &self.bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: uniform_buffer.as_entire_binding(),
-                        }],
-                    });
-                per_draw_state.push((uniform_buffer, bind_group));
+                let bind_group = write_pooled_buffer(
+                    &self.core.device,
+                    &self.core.queue,
+                    &self.bind_group_layout,
+                    &mut self.uniform_pool,
+                    drawable.entity,
+                    "weft-draw-uniforms",
+                    bytemuck::bytes_of(&uniforms),
+                    wgpu::BufferUsages::UNIFORM,
+                );
 
                 let texture_bind_group = match (
                     &drawable.texture,
@@ -1222,8 +1274,6 @@ impl RenderContext {
                         self.texture_cache.get(&key).unwrap()
                     }
                 };
-
-                let (_, bind_group) = per_draw_state.last().unwrap();
 
                 // A skinned draw needs both a `skin` hash (per-vertex
                 // joint/weight data) and a `JointPalette` on the same
@@ -1258,33 +1308,24 @@ impl RenderContext {
                     let (vertex_buffer, index_buffer, index_count) =
                         self.skin_cache.get(&key).unwrap();
 
-                    let joint_buffer =
-                        self.core
-                            .device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("weft-joint-matrices"),
-                                contents: bytemuck::cast_slice(matrices.as_slice()),
-                                usage: wgpu::BufferUsages::STORAGE,
-                            });
-                    let joint_bind_group =
-                        self.core
-                            .device
-                            .create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("weft-joint-bind-group"),
-                                layout: &self.joint_bind_group_layout,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: joint_buffer.as_entire_binding(),
-                                }],
-                            });
-                    joint_buffers.push((joint_buffer, joint_bind_group));
-                    let (_, joint_bind_group) = joint_buffers.last().unwrap();
+                    // Shared with the shadow pass above (Phase 6) — see
+                    // that call site's comment.
+                    let joint_bind_group = write_pooled_buffer(
+                        &self.core.device,
+                        &self.core.queue,
+                        &self.joint_bind_group_layout,
+                        &mut self.joint_pool,
+                        drawable.entity,
+                        "weft-joint-matrices",
+                        bytemuck::cast_slice(matrices.as_slice()),
+                        wgpu::BufferUsages::STORAGE,
+                    );
 
                     pass.set_pipeline(&skinned_pipeline);
                     pass.set_bind_group(0, bind_group, &[]);
                     pass.set_bind_group(1, texture_bind_group, &[]);
                     pass.set_bind_group(2, joint_bind_group, &[]);
-                    pass.set_bind_group(3, &lights_bind_group, &[]);
+                    pass.set_bind_group(3, &self.lights_bind_group, &[]);
                     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..*index_count, 0, 0..1);
@@ -1326,7 +1367,7 @@ impl RenderContext {
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, bind_group, &[]);
                 pass.set_bind_group(1, texture_bind_group, &[]);
-                pass.set_bind_group(2, &lights_bind_group, &[]);
+                pass.set_bind_group(2, &self.lights_bind_group, &[]);
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..index_count, 0, 0..1);
@@ -1435,6 +1476,33 @@ impl RenderContext {
             }
         }
 
+        // Evict pool entries for entities no longer in this frame's
+        // drawable set (Phase 6) — an entity despawned since the last frame
+        // shouldn't keep its GPU buffer alive forever. The shadow-uniform
+        // pool is only touched (created, written, *or* evicted) on frames
+        // that actually ran the shadow pass — when the scene has no shadow
+        // caster this frame, its entries are left alone rather than wiped,
+        // since "no caster right now" says nothing about whether one will
+        // reappear next frame.
+        let live_entities: std::collections::HashSet<hecs::Entity> =
+            drawables.iter().map(|d| d.entity).collect();
+        self.uniform_pool.retain(|e, _| live_entities.contains(e));
+        if lights.shadow_caster_index >= 0 {
+            self.shadow_uniform_pool
+                .retain(|e, _| live_entities.contains(e));
+        }
+        let live_skinned: std::collections::HashSet<hecs::Entity> = drawables
+            .iter()
+            .filter(|d| {
+                matches!(
+                    (&d.mesh, &d.skin, &d.joint_matrices),
+                    (MeshKind::Asset(_), Some(_), Some(_))
+                )
+            })
+            .map(|d| d.entity)
+            .collect();
+        self.joint_pool.retain(|e, _| live_skinned.contains(e));
+
         Ok(())
     }
 }
@@ -1512,6 +1580,7 @@ fn extract_scene(
             (
                 e,
                 Drawable {
+                    entity: e,
                     transform: *t,
                     mesh: m.mesh.clone(),
                     color: mat.color,
