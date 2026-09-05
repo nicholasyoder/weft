@@ -8,6 +8,8 @@ const GOLDEN: &str = "tests/fixtures/scenes/render_basic.golden.png";
 const RENDER_IMPORTED_SCENE: &str = "tests/fixtures/scenes/render_imported.toml";
 const IMPORTED_GOLDEN: &str = "tests/fixtures/scenes/render_imported.golden.png";
 const IMPORTED_ASSETS_DIR: &str = "tests/fixtures/assets";
+const RENDER_IMPORTED_MULTI_SCENE: &str = "tests/fixtures/scenes/render_imported_multi.toml";
+const IMPORTED_MULTI_GOLDEN: &str = "tests/fixtures/scenes/render_imported_multi.golden.png";
 const RENDER_TEXT_SCENE: &str = "tests/fixtures/scenes/render_text.toml";
 const TEXT_GOLDEN: &str = "tests/fixtures/scenes/render_text.golden.png";
 const ANIMATION_SCENE: &str = "tests/fixtures/scenes/animation_demo.toml";
@@ -126,6 +128,41 @@ fn render_of_imported_gltf_asset_matches_golden_image_within_tolerance() {
 
     let fresh = image::open(&out).unwrap().into_rgba8();
     let golden = image::open(IMPORTED_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
+#[test]
+fn render_of_a_multi_part_imported_gltf_matches_golden_image_within_tolerance() {
+    // Proves the multi-mesh/multi-primitive import arc (ADR-0020) end-to-end
+    // in a real render, not just via unit-level asset-hash checks: two
+    // sibling entities (imported from `multi_mesh.gltf`, each a separate
+    // `MeshRef`) both draw, at their file-baked relative offset, in one
+    // scene — the same "definition of done" bar every other render golden
+    // in this file already holds itself to.
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            RENDER_IMPORTED_MULTI_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--assets-dir",
+            IMPORTED_ASSETS_DIR,
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(IMPORTED_MULTI_GOLDEN).unwrap().into_rgba8();
     assert!(
         images_match_within_tolerance(&fresh, &golden),
         "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"

@@ -13,6 +13,6 @@ mod texture_import;
 pub use audio_import::import_audio;
 pub use error::AssetError;
 pub use font_import::import_font;
-pub use gltf_import::{import_gltf, ImportedAsset};
+pub use gltf_import::{import_gltf, ImportedAsset, ImportedPart};
 pub use store::AssetStore;
 pub use texture_import::import_texture;

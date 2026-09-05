@@ -345,13 +345,18 @@ pub fn mix_scene(
 /// The result of importing one file into the content-addressed asset
 /// store: a pasteable scene-text-file fragment plus the content hash(es) it
 /// references, for a caller (an MCP tool, say) that wants the hashes
-/// directly rather than re-parsing them back out of `fragment`.
+/// directly rather than re-parsing them back out of `fragment`. A glTF
+/// import can produce several mesh/skin parts (see ADR-0020) — `mesh_hash`/
+/// `skin_hash` from the single-mesh era became `mesh_hashes`/`skin_hashes`
+/// accordingly; `texture_hash` stays singular, taken from the first part
+/// that has a base-color texture (a caller that needs every part's own
+/// texture should read `fragment` directly).
 pub struct ImportResult {
     pub fragment: String,
-    pub mesh_hash: Option<String>,
+    pub mesh_hashes: Vec<String>,
     pub texture_hash: Option<String>,
     pub font_hash: Option<String>,
-    pub skin_hash: Option<String>,
+    pub skin_hashes: Vec<String>,
     pub skeleton_hash: Option<String>,
     pub clip_hash: Option<String>,
     pub audio_hash: Option<String>,
@@ -376,10 +381,14 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 .map_err(|e| CliError::from_asset_error(&e))?;
             Ok(ImportResult {
                 fragment: commands::import::gltf_fragment(&imported),
-                mesh_hash: Some(imported.mesh_hash.clone()),
-                texture_hash: imported.texture_hash.clone(),
+                mesh_hashes: imported.parts.iter().map(|p| p.mesh_hash.clone()).collect(),
+                texture_hash: imported.parts.iter().find_map(|p| p.texture_hash.clone()),
                 font_hash: None,
-                skin_hash: imported.skin_hash.clone(),
+                skin_hashes: imported
+                    .parts
+                    .iter()
+                    .filter_map(|p| p.skin_hash.clone())
+                    .collect(),
                 skeleton_hash: imported.skeleton_hash.clone(),
                 clip_hash: imported.clip_hash.clone(),
                 audio_hash: None,
@@ -390,10 +399,10 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 .map_err(|e| CliError::from_asset_error(&e))?;
             Ok(ImportResult {
                 fragment: commands::import::texture_fragment(&hash),
-                mesh_hash: None,
+                mesh_hashes: Vec::new(),
                 texture_hash: Some(hash),
                 font_hash: None,
-                skin_hash: None,
+                skin_hashes: Vec::new(),
                 skeleton_hash: None,
                 clip_hash: None,
                 audio_hash: None,
@@ -404,10 +413,10 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 .map_err(|e| CliError::from_asset_error(&e))?;
             Ok(ImportResult {
                 fragment: commands::import::font_fragment(&hash),
-                mesh_hash: None,
+                mesh_hashes: Vec::new(),
                 texture_hash: None,
                 font_hash: Some(hash),
-                skin_hash: None,
+                skin_hashes: Vec::new(),
                 skeleton_hash: None,
                 clip_hash: None,
                 audio_hash: None,
@@ -418,10 +427,10 @@ pub fn import_asset(input: &Path, assets_dir: &Path) -> Result<ImportResult, Cli
                 .map_err(|e| CliError::from_asset_error(&e))?;
             Ok(ImportResult {
                 fragment: commands::import::audio_fragment(&hash),
-                mesh_hash: None,
+                mesh_hashes: Vec::new(),
                 texture_hash: None,
                 font_hash: None,
-                skin_hash: None,
+                skin_hashes: Vec::new(),
                 skeleton_hash: None,
                 clip_hash: None,
                 audio_hash: Some(hash),

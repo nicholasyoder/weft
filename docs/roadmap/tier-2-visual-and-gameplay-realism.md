@@ -45,11 +45,15 @@ See [ADR-0018](../decisions/0018-physics-gameplay-substrate.md) for the full des
 - **Scene-authorable character-controller tuning** — `KinematicCharacterController::default()`'s fixed tuning (no autostep, 45° slope limits) isn't exposed as scene fields yet; revisit when a ramp/staircase/moving-platform case needs it.
 - **A named collision-layer registry** — `Collider.membership`/`filter` are raw `u32` bitmasks, not named layers.
 
-## Multi-mesh / multi-part asset import
+## Multi-mesh / multi-part asset import — **done** (2026-09-04)
 
-`engine import` hard-errors (`ASSET_GLTF_UNSUPPORTED`) on anything beyond one mesh/one primitive per glTF file — a deliberate scope limit called out in [ADR-0005](../decisions/0005-asset-pipeline.md), not an oversight. Real props and characters generally aren't single-primitive files. This needs to lift before content complexity can grow much past the current crate/pillar-obstacle level.
+`engine import` now accepts any number of meshes/primitives per glTF file instead of hard-erroring past one of either — see [ADR-0020](../decisions/0020-multi-mesh-gltf-import.md) for the full design record (Phase 18 in `completed-phases.md`).
 
-**Reprioritized (2026-09-04 audit): ranks above the remaining lighting items above.** A scene can already look reasonably good under today's single-sun lighting; it can't contain a normal imported character or composite prop at all. Whichever concrete need surfaces first should still win, per this tier's own framing — but absent that, this is the higher-leverage gap.
+**Still open, not silently lost:**
+
+- **No parent/child transform component exists**, so a multi-part asset imports as flat sibling entities sharing one baked-in relative layout, not a hierarchy — moving/animating one part independently of its siblings isn't supported. Revisit when a real scene needs that.
+- **At most one mesh node per file may carry a skin** (unchanged from ADR-0005/ADR-0015). A multi-part *skinned* character (several skinned siblings animated in lockstep) isn't supported — no concrete consumer needs one yet, and `Animator`'s per-entity playback state has no synchronization mechanism across siblings.
+- **A mesh referenced by more than one node (instancing)** is a structured error, not supported — no concrete consumer has needed it yet.
 
 ---
 

@@ -1,4 +1,4 @@
-# Completed Phases (0–17)
+# Completed Phases (0–18)
 
 This is the historical build log for Weft: what was actually built, in what order, and what was learned or changed along the way. It's a record, like `docs/decisions/`, not a place to plan new work — don't edit past entries to "fix" them in hindsight. For how forward-looking work is organized now, see [`../../ROADMAP.md`](../../ROADMAP.md) and the four capability tiers it links to.
 
@@ -306,6 +306,22 @@ Real friction hit, worth recording since it'll recur for the next asset too: thi
 - A `Gate`/`lever` mechanic (`games/sandbox/src/gate.rs`, `scripts/lever.lua`): holding E near the lever casts a real `engine.raycast` from the lever toward the player and only despawns the gate (found via `Gate`'s marker component, not a hardcoded id) when that ray reports the player as the unobstructed hit — a real line-of-sight check, distinct from `pickup.lua`'s `engine.overlapping` proximity check. First live use of `engine.raycast` in `games/sandbox`. — **done**
 - A procedural normal map for the crate/steel-pillar obstacles: `tools/asset-gen/generate_crate.py` gained `--normal-map`, generating a cosine-ripple heightfield and converting it to a tangent-space normal-map image entirely with bpy's own pixel buffer (no PIL/numpy, no external API) via central-difference gradients, packed into the exported GLB so `engine import` picks it up as a real `normal_texture`/`tangent` pair. — **done**
 - Velocity-based kinematics, a Lua-exposed shape-cast, scene-authorable character-controller tuning, a named collision-layer registry, spot lights, more than 4 lights/one shadow caster, point-light shadows, cascaded/scene-fitted shadow volumes, environment/IBL lighting, and multi-mesh/multi-part asset import — **not done, out of scope on purpose**, unchanged from Tier 2's own open list; nothing here needed any of them.
+
+---
+
+## Phase 18 — Multi-mesh / multi-primitive glTF import — **done** (2026-09-04)
+
+**Goal**: lift `engine import`'s ADR-0005 scope limit of one mesh/one primitive per glTF file, ranked by the 2026-09-04 Tier 2 reprioritization audit above the remaining lighting work — a scene already looks reasonable under one directional sun, but couldn't contain a normal composite prop or character at all.
+
+- `engine_assets::import_gltf` walks the default scene graph once (`collect_mesh_nodes`), collecting every node that references a mesh — any number of meshes, any number of primitives per mesh — instead of hard-erroring past one of either. — **done**
+- Each primitive imports as its own `ImportedPart` (mesh + metallic-roughness PBR material); `ImportedAsset` is now `{ parts: Vec<ImportedPart>, skeleton_hash, clip_hash }`. `engine import`'s emitted fragment stays byte-identical to before for the single-part case, and emits one `[[entity]]` block per part (plus a short comment) for a multi-part file — this engine has no parent/child transform component, so siblings are placed as a group by giving them all the same `Transform`. — **done**
+- At most one mesh node per file may still carry a glTF skin (unchanged from ADR-0005/ADR-0015), and a mesh referenced by more than one node (instancing) is a new structured `ASSET_GLTF_UNSUPPORTED` error rather than a silent first-match. — **done**
+- `ImportResult`/`weft_import`'s MCP response: `mesh_hash`/`skin_hash` → `mesh_hashes`/`skin_hashes` (breaking rename, no compatibility shim). — **done**
+- A multi-part skinned character (independently-movable parts, or several skinned siblings kept in animation lockstep) — **not done, out of scope on purpose**, no concrete consumer yet; see ADR-0020's "Revisit when".
+
+**Definition of done**: `cargo test --workspace` green including new fixtures (`multi_mesh.gltf`, extending `multi_primitive.gltf`'s test from an error case to a positive one, `duplicate_mesh_reference.gltf` for the new instancing rejection) and a new render golden (`render_imported_multi.toml`/`.golden.png`) proving two sibling entities imported from one file both draw correctly at their file-baked relative offset — the same real-CLI-surface bar every prior phase held itself to, not just crate-level unit tests.
+
+**Implementation notes**: see [ADR-0020](../decisions/0020-multi-mesh-gltf-import.md) for the full design record, including why a parent/child transform component and multi-part-skinned-animation sync were both deliberately deferred rather than built speculatively.
 
 **Definition of done**: proven live, not just in tests. Met: `xvfb-run cargo test -p sandbox --test play -- --ignored` runs the full expanded scene through the real windowed loop end-to-end; a throwaway offscreen render (`sandbox::registry()` + `engine_render::render_scene_to_png`, since `engine render`'s CLI hardcodes the base registry and doesn't know `Gate`/`PlayerControl`) visually confirmed the larger arena, the partition/gate/lever layout, both moving platforms, and — after finding and fixing a real bug (below) — the normal map's cosine ripple actually shading both visible crate faces differently under the sun; `cargo test --workspace` reached 227 tests, clippy `-D warnings` and fmt both clean.
 

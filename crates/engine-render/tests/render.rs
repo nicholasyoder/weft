@@ -182,19 +182,20 @@ fn rendering_an_imported_textured_mesh_produces_non_blank_output() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../engine-assets/tests/fixtures/box_textured.gltf");
     let imported = engine_assets::import_gltf(&fixture, &store).unwrap();
+    let part = imported.parts.into_iter().next().unwrap();
 
     let mut world = hecs::World::new();
     world.spawn(camera_at(Vec3::new(2.0, 2.0, 4.0)));
     world.spawn((
         Transform::from_position(Vec3::ZERO),
         MeshRef {
-            mesh: MeshKind::Asset(imported.mesh_hash),
+            mesh: MeshKind::Asset(part.mesh_hash),
             skin: None,
             tangent: None,
         },
         Material {
-            color: imported.base_color,
-            texture: imported.texture_hash,
+            color: part.base_color,
+            texture: part.texture_hash,
             roughness: 1.0,
             metallic: 0.0,
             metallic_roughness_texture: None,

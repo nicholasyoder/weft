@@ -55,9 +55,10 @@ fn importing_a_gltf_twice_produces_the_same_mesh_hash() {
     let store = AssetStore::new(&dir);
     let first = import_gltf(&fixture("box.gltf"), &store).unwrap();
     let second = import_gltf(&fixture("box.gltf"), &store).unwrap();
-    assert_eq!(first.mesh_hash, second.mesh_hash);
-    assert_eq!(first.base_color, [0.8, 0.0, 0.0]);
-    assert_eq!(first.texture_hash, None);
+    assert_eq!(first.parts.len(), 1);
+    assert_eq!(first.parts[0].mesh_hash, second.parts[0].mesh_hash);
+    assert_eq!(first.parts[0].base_color, [0.8, 0.0, 0.0]);
+    assert_eq!(first.parts[0].texture_hash, None);
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -85,7 +86,10 @@ fn importing_a_textured_gltf_produces_a_texture_hash_and_stores_a_png() {
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);
     let imported = import_gltf(&fixture("box_textured.gltf"), &store).unwrap();
-    let texture_hash = imported.texture_hash.expect("expected an embedded texture");
+    let texture_hash = imported.parts[0]
+        .texture_hash
+        .clone()
+        .expect("expected an embedded texture");
     let bytes = store.get(&texture_hash).unwrap();
     let decoded = image::load_from_memory(&bytes).unwrap();
     assert!(decoded.width() > 0 && decoded.height() > 0);
@@ -97,15 +101,18 @@ fn importing_a_gltf_with_a_metallic_roughness_texture_stores_it_distinctly_from_
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);
     let imported = import_gltf(&fixture("box_textured_mr.gltf"), &store).unwrap();
-    let base_color_hash = imported
+    let part = &imported.parts[0];
+    let base_color_hash = part
         .texture_hash
+        .clone()
         .expect("expected a base color texture");
-    let mr_hash = imported
+    let mr_hash = part
         .metallic_roughness_texture_hash
+        .clone()
         .expect("expected a metallic-roughness texture");
     assert_ne!(base_color_hash, mr_hash);
-    assert_eq!(imported.metallic_factor, 1.0);
-    assert_eq!(imported.roughness_factor, 1.0);
+    assert_eq!(part.metallic_factor, 1.0);
+    assert_eq!(part.roughness_factor, 1.0);
     let bytes = store.get(&mr_hash).unwrap();
     let decoded = image::load_from_memory(&bytes).unwrap();
     assert!(decoded.width() > 0 && decoded.height() > 0);
@@ -117,17 +124,22 @@ fn importing_a_gltf_with_a_normal_map_generates_one_tangent_per_vertex() {
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);
     let imported = import_gltf(&fixture("box_normal_map.gltf"), &store).unwrap();
-    let normal_hash = imported
+    let part = &imported.parts[0];
+    let normal_hash = part
         .normal_texture_hash
+        .clone()
         .expect("expected a normal map texture");
-    let tangent_hash = imported.tangent_hash.expect("expected generated tangents");
-    assert_eq!(imported.normal_scale, 1.0);
+    let tangent_hash = part
+        .tangent_hash
+        .clone()
+        .expect("expected generated tangents");
+    assert_eq!(part.normal_scale, 1.0);
 
     let bytes = store.get(&normal_hash).unwrap();
     let decoded = image::load_from_memory(&bytes).unwrap();
     assert!(decoded.width() > 0 && decoded.height() > 0);
 
-    let mesh_data = mesh::decode(&store.get(&imported.mesh_hash).unwrap()).unwrap();
+    let mesh_data = mesh::decode(&store.get(&part.mesh_hash).unwrap()).unwrap();
     let tangent_data = engine_assets::tangent::decode(&store.get(&tangent_hash).unwrap()).unwrap();
     assert_eq!(tangent_data.tangents.len(), mesh_data.positions.len());
     for t in &tangent_data.tangents {
@@ -139,10 +151,38 @@ fn importing_a_gltf_with_a_normal_map_generates_one_tangent_per_vertex() {
 }
 
 #[test]
-fn multi_primitive_gltf_is_a_structured_error() {
+fn multi_primitive_gltf_imports_one_part_per_primitive() {
+    // `multi_primitive.gltf` is one mesh with two primitives, reachable
+    // through a matrix-transformed parent node — exercises both the
+    // primitive loop and transform-baking-through-a-parent-node paths (see
+    // ADR-0020).
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);
-    let err = import_gltf(&fixture("multi_primitive.gltf"), &store).unwrap_err();
+    let imported = import_gltf(&fixture("multi_primitive.gltf"), &store).unwrap();
+    // Both primitives reference identical attribute/index accessors under
+    // the same node, so they're expected to converge on the same
+    // content-addressed mesh hash — the point of this fixture is exercising
+    // the primitive loop and transform baking, not distinct geometry.
+    assert_eq!(imported.parts.len(), 2);
+    assert_eq!(imported.parts[0].mesh_hash, imported.parts[1].mesh_hash);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn multi_mesh_gltf_imports_one_part_per_mesh() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let imported = import_gltf(&fixture("multi_mesh.gltf"), &store).unwrap();
+    assert_eq!(imported.parts.len(), 2);
+    assert_ne!(imported.parts[0].mesh_hash, imported.parts[1].mesh_hash);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_mesh_referenced_by_two_nodes_is_a_structured_error() {
+    let dir = scratch_store_dir();
+    let store = AssetStore::new(&dir);
+    let err = import_gltf(&fixture("duplicate_mesh_reference.gltf"), &store).unwrap_err();
     assert_eq!(err.code(), "ASSET_GLTF_UNSUPPORTED");
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -184,8 +224,12 @@ fn importing_a_skinned_gltf_produces_skin_skeleton_and_clip_data() {
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);
     let imported = import_gltf(&fixture("skinned.gltf"), &store).unwrap();
+    assert_eq!(imported.parts.len(), 1);
 
-    let skin_hash = imported.skin_hash.expect("expected skin data");
+    let skin_hash = imported.parts[0]
+        .skin_hash
+        .clone()
+        .expect("expected skin data");
     let skeleton_hash = imported.skeleton_hash.expect("expected skeleton data");
     let clip_hash = imported.clip_hash.expect("expected an animation clip");
 
@@ -193,7 +237,7 @@ fn importing_a_skinned_gltf_produces_skin_skeleton_and_clip_data() {
     // stored vertex positions for a skinned mesh (see ADR-0005 decision 4's
     // skinned-mesh exception, ADR-0015) — positions must match the raw
     // authored quad exactly.
-    let mesh_data = mesh::decode(&store.get(&imported.mesh_hash).unwrap()).unwrap();
+    let mesh_data = mesh::decode(&store.get(&imported.parts[0].mesh_hash).unwrap()).unwrap();
     assert_eq!(
         mesh_data.positions,
         vec![
@@ -251,7 +295,7 @@ fn importing_an_unskinned_gltf_leaves_skin_fields_none() {
     let dir = scratch_store_dir();
     let store = AssetStore::new(&dir);
     let imported = import_gltf(&fixture("box.gltf"), &store).unwrap();
-    assert!(imported.skin_hash.is_none());
+    assert!(imported.parts[0].skin_hash.is_none());
     assert!(imported.skeleton_hash.is_none());
     assert!(imported.clip_hash.is_none());
     std::fs::remove_dir_all(&dir).ok();

@@ -100,6 +100,44 @@ fn reimporting_the_same_file_produces_no_spurious_diff_or_churn() {
 }
 
 #[test]
+fn importing_a_multi_mesh_gltf_emits_one_entity_per_part() {
+    let dir = scratch_dir();
+    let assets_dir = dir.join("assets");
+    let out = dir.join("fragment.toml");
+
+    Command::cargo_bin("engine")
+        .unwrap()
+        .args([
+            "import",
+            "../engine-assets/tests/fixtures/multi_mesh.gltf",
+            "--assets-dir",
+            assets_dir.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let fragment = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(fragment.matches("[[entity]]").count(), 2);
+    assert_eq!(fragment.matches("name = \"imported_0\"").count(), 1);
+    assert_eq!(fragment.matches("name = \"imported_1\"").count(), 1);
+
+    let hashes: Vec<&str> = fragment
+        .lines()
+        .filter_map(|l| l.strip_prefix("mesh = { asset = \""))
+        .filter_map(|l| l.strip_suffix("\" }"))
+        .collect();
+    assert_eq!(hashes.len(), 2);
+    assert_ne!(
+        hashes[0], hashes[1],
+        "the two meshes have distinct baked transforms, so distinct content hashes"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn importing_an_audio_file_emits_a_pasteable_scene_fragment() {
     let dir = scratch_dir();
     let assets_dir = dir.join("assets");

@@ -8,7 +8,6 @@
 
 - **`Resources` (`engine-core/src/resources.rs`) is an `Option`-typed grab-bag** with no compile-time distinction between "always present" (e.g. `AudioSettings`) and "genuinely optional" (e.g. `AssetsDir`) resources — that distinction lives only in doc comments. A heavier required/optional struct split was considered and deliberately deferred; `Resources::remove::<T>()` already closes the sharpest edge (a resource no longer has to live for the `Sim`'s full lifetime).
 - **The scenario/scene split is a widening seam, not a static one.** `SimSource::build` (`engine-cli/src/lib.rs:56-75`) manually re-inserts defaults (e.g. `AudioSettings::default()`) for the hardcoded-`Scenario` arm because it never goes through `engine_scene::load`. Every new scene-file-only feature needs a parallel manual patch to keep both paths equivalent. Only 1 of 4 built-in scenarios (`broken-rng`) actually lacks a scene-file counterpart, by design — it exists to bypass the seeded RNG via `rand::thread_rng()`, which can't be reproduced from a declarative scene file.
-- **`engine-render/src/gpu.rs`'s `draw()` allocates a fresh uniform buffer + bind group per drawable every frame — no pooling.** Deliberately deferred so far; no perf test exists yet to validate pooling against. Worth revisiting once Tier 2/3's fourth render pass (shadows) lands, since that's when the per-frame allocation cost starts compounding.
 
 ---
 
