@@ -20,13 +20,16 @@ See [ADR-0019](../decisions/0019-pbr-lighting-and-shadows.md) for the full desig
 
 **Still open, not silently lost:**
 
+**A 2026-09-04 follow-up audit** (asked: is this arc's scope compatible with eventually shipping full, high-quality-graphics games, not just proving the pipeline works?) confirmed the items ADR-0019 already named as real, and reprioritized them — environment lighting now ranks above spot lights/more-lights, since it gates whether *any* content looks right rather than how many lights a scene can have. It also surfaced that the lighting bind-group layout is closer to a hard ceiling than "revisit when a scene needs more" implies. Two further gaps it found (no mipmaps, no HDR/tonemapping) predate this arc entirely and live in [Tier 3](tier-3-polish-and-feel.md) instead, reprioritized there.
+
+- **Environment/IBL lighting** — the flat `ambient = 0.15` term remains a placeholder. **Reprioritized above the items below**: with zero ambient response outside direct light, metallic surfaces in shadow read as near-black, which breaks the "realistic" goal sooner than light count or spot lights do. Revisit before authoring much metal-heavy content.
+- **The lighting bind group is already at wgpu's 4-bind-group ceiling**, not just "no consumer needs more yet." ADR-0019 folded lights, the shadow map, and the shadow sampler into one group specifically because a 4th group wouldn't fit (`shader.wgsl:48-50`). The next lighting feature — IBL textures, cascaded shadow maps, a point-light shadow cubemap — can't just add a bind group; it has to grow entries within the existing ones or restructure. Worth deciding on a storage-buffer-based light list (removes the fixed 4-light cap and gives headroom for new entries) *before* more scenes get authored assuming ≤4 lights, rather than after.
 - **Spot lights** — no concrete consumer needs one yet.
 - **More than 4 lights per scene, or more than one shadow-casting light** — `RenderError::TooManyLights`/`MultipleShadowCasters` are structured errors, not silent truncation.
 - **Point-light shadows** — would need a 6-pass cubemap; only directional shadow casting exists.
-- **Scene-bounds-fitted or cascaded shadow volumes** — today's shadow volume is a fixed-extent orthographic frustum centered on the camera target.
+- **Scene-bounds-fitted or cascaded shadow volumes** — today's shadow volume is a fixed-extent orthographic frustum (`SHADOW_ORTHO_HALF_EXTENT` in `gpu.rs`) centered on the camera target. Watch for this breaking (shadows vanishing past the frustum edge) the first time a level's play area outgrows the sandbox playground, not just when cascades get requested as a feature.
 - **Per-object shadow-casting opt-out** — every drawable casts a shadow unconditionally.
-- **Soft/PCF-filtered shadows** — today's shadow sampling is single-tap comparison sampling.
-- **Environment/IBL lighting** — the flat `ambient = 0.15` term remains a placeholder.
+- **Soft/PCF-filtered shadows** — today's shadow sampling is single-tap comparison sampling; shadow edges will read as aliased even once everything else here is fixed.
 - **Per-frame buffer/bind-group pooling (ADR-0019's Phase 6) is entity-keyed but not yet exploited by the one-shot render paths** (`render_scene`/`render_scene_with_context`), which never get a "next frame" to amortize across.
 
 ## Physics gameplay substrate — **done** (2026-09-03)
@@ -45,6 +48,8 @@ See [ADR-0018](../decisions/0018-physics-gameplay-substrate.md) for the full des
 ## Multi-mesh / multi-part asset import
 
 `engine import` hard-errors (`ASSET_GLTF_UNSUPPORTED`) on anything beyond one mesh/one primitive per glTF file — a deliberate scope limit called out in [ADR-0005](../decisions/0005-asset-pipeline.md), not an oversight. Real props and characters generally aren't single-primitive files. This needs to lift before content complexity can grow much past the current crate/pillar-obstacle level.
+
+**Reprioritized (2026-09-04 audit): ranks above the remaining lighting items above.** A scene can already look reasonably good under today's single-sun lighting; it can't contain a normal imported character or composite prop at all. Whichever concrete need surfaces first should still win, per this tier's own framing — but absent that, this is the higher-leverage gap.
 
 ---
 
