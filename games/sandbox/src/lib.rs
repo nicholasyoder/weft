@@ -1,5 +1,6 @@
 pub mod camera_follow;
 pub mod camera_look;
+pub mod gate;
 pub mod hud;
 pub mod moving_platform;
 pub mod player_control;
@@ -7,6 +8,7 @@ pub mod player_control;
 use std::path::Path;
 
 use camera_follow::CameraFollow;
+use gate::Gate;
 use hud::Pickup;
 use moving_platform::MovingPlatform;
 use player_control::{CharacterVelocity, PlayerControl};
@@ -39,6 +41,7 @@ pub fn registry() -> (
         load::<MovingPlatform>,
         dump::<MovingPlatform>,
     );
+    components.register("Gate", load::<Gate>, dump::<Gate>);
 
     let mut systems = engine_cli::registry::systems();
     systems.register("camera_look", camera_look::camera_look_system);

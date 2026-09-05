@@ -33,7 +33,7 @@ impl engine_cli::registry::Named for Pickup {
 /// A fixed constant (rather than derived from the scene) is fine for this
 /// one hand-authored scene; deriving it would be the natural next step if a
 /// second scene ever needs this system.
-const TOTAL_PICKUPS: usize = 3;
+const TOTAL_PICKUPS: usize = 5;
 
 /// Counts remaining `Pickup`-tagged entities and writes
 /// `"Pickups: {collected}/{TOTAL_PICKUPS}"` into every `Text` entity's

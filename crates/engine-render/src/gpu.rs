@@ -70,10 +70,15 @@ struct Lights {
 const SHADOW_MAP_SIZE: u32 = 2048;
 /// Half-width/height of the shadow caster's orthographic frustum, centered
 /// on the main camera's look-at target. Not scene-bounds-fitted or
-/// cascaded — a deliberate, named scoping limit (see Phase 5).
-const SHADOW_ORTHO_HALF_EXTENT: f32 = 10.0;
+/// cascaded — a deliberate, named scoping limit (see Phase 5). Bumped from
+/// 10.0 to cover `games/sandbox`'s enlarged ~34x34 arena (corner-to-center
+/// distance ~24) when that scene outgrew the original 20x20 fit — still a
+/// fixed constant, not adaptive; ADR-0019's "revisit when a real level's
+/// geometry outgrows this" note is about a bigger structural change
+/// (scene-bounds-fitted/cascaded volumes), not this kind of bump.
+const SHADOW_ORTHO_HALF_EXTENT: f32 = 26.0;
 const SHADOW_NEAR: f32 = 0.1;
-const SHADOW_FAR: f32 = 30.0;
+const SHADOW_FAR: f32 = 60.0;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

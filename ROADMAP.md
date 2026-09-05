@@ -49,7 +49,7 @@ weft/
 
 ## How this roadmap is organized
 
-- [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) — Phases 0–14, done. A historical build log, like `docs/decisions/` — not a place to plan new work.
+- [`docs/roadmap/completed-phases.md`](docs/roadmap/completed-phases.md) — Phases 0–17, done. A historical build log, like `docs/decisions/` — not a place to plan new work.
 - Forward-looking *capability* work (things the engine doesn't do yet) is organized into four priority tiers, seeded by a full capability audit of the engine (2026-09-01) against what a fully realized game — realistic graphics, audio, animation, UI, everything a shipped game needs — actually requires. **Tier 1 is fully closed as of Phase 14 (2026-09-01)**:
   - [Tier 1 — Foundational](docs/roadmap/tier-1-foundational.md) — done
   - [Tier 2 — Visual & gameplay realism](docs/roadmap/tier-2-visual-and-gameplay-realism.md)

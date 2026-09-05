@@ -1,5 +1,5 @@
 //! Proves games/sandbox's own scripted content — not a synthetic
-//! engine-script fixture — actually works: `scenes/playground.toml`'s three
+//! engine-script fixture — actually works: `scenes/playground.toml`'s five
 //! gold pickups run `scripts/pickup.lua` (see ADR-0013), which uses
 //! `engine.overlapping`/`engine.key_held`/`engine.despawn` to let the player
 //! collect a pickup by walking close (a real rapier sensor overlap, see
@@ -9,6 +9,16 @@
 //! dispatches scripts directly — no window needed (only `engine-cli`'s live
 //! `play` loop, exercised separately by the `#[ignore]`d subprocess test in
 //! `tests/play.rs`, needs a real windowing backend).
+//!
+//! The scene's "lever" entity also carries a `Script` (`scripts/lever.lua`,
+//! see `tests/lever.rs`), so every `ScriptHost` built here loads both files
+//! — `ScriptHost::dispatch` calls every `Script`-tagged entity in the world
+//! regardless of which file a given test cares about, so an unloaded path
+//! would surface as a dispatch error, not a silent skip (ADR-0013's "surface
+//! every script's dispatch error" behavior). `scripted_entity_count` below
+//! therefore counts pickups *and* the lever together (6 at scene start: 5
+//! pickups + 1 lever); the player starting far from all of them in these
+//! tests keeps the lever a no-op throughout.
 
 use engine_core::sim::Sim;
 use engine_core::{Input, KeyCode, Transform};
@@ -18,7 +28,7 @@ use sandbox::player_control::PlayerControl;
 
 const SCENE: &str = "scenes/playground.toml";
 
-fn pickup_count(world: &hecs::World) -> usize {
+fn scripted_entity_count(world: &hecs::World) -> usize {
     world.query::<&Script>().iter().count()
 }
 
@@ -32,6 +42,7 @@ fn load(
 fn load_pickup_host() -> ScriptHost {
     let mut host = ScriptHost::new().unwrap();
     host.load_file("scripts/pickup.lua".as_ref()).unwrap();
+    host.load_file("scripts/lever.lua".as_ref()).unwrap();
     host
 }
 
@@ -67,9 +78,9 @@ fn standing_far_from_every_pickup_and_holding_e_collects_nothing() {
     let mut host = load_pickup_host();
 
     assert_eq!(
-        pickup_count(&sim.world),
-        3,
-        "playground.toml should start with 3 scripted pickups"
+        scripted_entity_count(&sim.world),
+        6,
+        "playground.toml should start with 5 scripted pickups + 1 scripted lever"
     );
 
     // A real physics tick registers the player's and every pickup's rapier
@@ -86,9 +97,9 @@ fn standing_far_from_every_pickup_and_holding_e_collects_nothing() {
     );
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(
-        pickup_count(&sim.world),
-        3,
-        "far away from every pickup: nothing should be collected"
+        scripted_entity_count(&sim.world),
+        6,
+        "far away from every pickup and the lever: nothing should be collected"
     );
 }
 
@@ -106,7 +117,7 @@ fn standing_on_a_pickup_and_holding_e_collects_exactly_one() {
         .map(|(e, _)| e)
         .expect("playground.toml should have a PlayerControl entity");
 
-    // Move the player onto pickup_1 (scene position [4.0, 0.4, 4.0])
+    // Move the player onto pickup_1 (scene position [8.0, 0.4, 10.0])
     // *before* the very first physics tick. `physics_step` only reads an
     // entity's Transform to seed its rapier body at first registration — a
     // Transform mutated on an already-registered dynamic body has no
@@ -120,7 +131,7 @@ fn standing_on_a_pickup_and_holding_e_collects_exactly_one() {
     // very first step.
     {
         let mut transform = sim.world.get::<&mut Transform>(player).unwrap();
-        transform.position = glam::Vec3::new(4.0, 0.4, 4.0);
+        transform.position = glam::Vec3::new(8.0, 0.4, 10.0);
     }
 
     sim.step().unwrap(); // registers both bodies already overlapping and computes this tick's overlap
@@ -134,8 +145,8 @@ fn standing_on_a_pickup_and_holding_e_collects_exactly_one() {
     );
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(
-        pickup_count(&sim.world),
-        2,
+        scripted_entity_count(&sim.world),
+        5,
         "standing on a pickup with E held should collect exactly one"
     );
 
@@ -150,8 +161,8 @@ fn standing_on_a_pickup_and_holding_e_collects_exactly_one() {
     );
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(
-        pickup_count(&sim.world),
-        2,
+        scripted_entity_count(&sim.world),
+        5,
         "releasing E should not collect anything else"
     );
 }

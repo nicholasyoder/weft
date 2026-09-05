@@ -72,11 +72,11 @@ fn hud_text_reflects_collected_pickups() {
 
     assert_eq!(
         sim.world.query::<&Pickup>().iter().count(),
-        3,
-        "playground.toml should start with 3 Pickup-tagged entities"
+        5,
+        "playground.toml should start with 5 Pickup-tagged entities"
     );
 
-    // Move the player onto pickup_1 (scene position [4.0, 0.4, 4.0])
+    // Move the player onto pickup_1 (scene position [8.0, 0.4, 10.0])
     // *before* the very first physics tick — physics-substrate-plan.md
     // Phase 6 made pickup collection a real rapier sensor overlap, and
     // `physics_step` only reads an entity's Transform to seed its rapier
@@ -91,7 +91,7 @@ fn hud_text_reflects_collected_pickups() {
             .map(|(e, _)| e)
             .expect("playground.toml should have a PlayerControl entity");
         let mut transform = sim.world.get::<&mut Transform>(player).unwrap();
-        transform.position = glam::Vec3::new(4.0, 0.4, 4.0);
+        transform.position = glam::Vec3::new(8.0, 0.4, 10.0);
     }
 
     // One system step: registers the (already-overlapping) bodies and
@@ -99,11 +99,13 @@ fn hud_text_reflects_collected_pickups() {
     // collected yet (no script dispatch has run) — the counter should still
     // read its starting value.
     sim.step().unwrap();
-    assert_eq!(hud_text(&sim.world), "Pickups: 0/3");
+    assert_eq!(hud_text(&sim.world), "Pickups: 0/5");
 
-    // Dispatch the script with E held: engine.overlapping() reports the
+    // Dispatch the scripts with E held: engine.overlapping() reports the
     // overlap this same tick's physics step just computed, so this
-    // despawns pickup_1 (and its Pickup marker with it).
+    // despawns pickup_1 (and its Pickup marker with it). The lever's script
+    // also dispatches here (every Script-bearing entity does), but the
+    // player is nowhere near it, so it's a no-op.
     let errors = dispatch(
         &mut sim,
         &mut host,
@@ -112,10 +114,10 @@ fn hud_text_reflects_collected_pickups() {
         &held(KeyCode::E),
     );
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-    assert_eq!(sim.world.query::<&Pickup>().iter().count(), 2);
+    assert_eq!(sim.world.query::<&Pickup>().iter().count(), 4);
 
     // hud_system runs as part of the scene's [[system]] list — one more
     // step should pick up the despawn that just happened.
     sim.step().unwrap();
-    assert_eq!(hud_text(&sim.world), "Pickups: 1/3");
+    assert_eq!(hud_text(&sim.world), "Pickups: 1/5");
 }

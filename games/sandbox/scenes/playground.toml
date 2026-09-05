@@ -1,44 +1,72 @@
-# The first Weft-built game: a physics playground. WASD moves a humanoid
-# capsule player (a real kinematic character controller, see
+# Weft's one real game: a physics playground, now a 34x34 walled arena
+# (up from the original 20x20 — see gpu.rs's SHADOW_ORTHO_HALF_EXTENT/
+# SHADOW_FAR, bumped to match) split by an interior partition into a large
+# main area and a smaller gated back room. WASD moves a humanoid capsule
+# player (a real kinematic character controller, see
 # games/sandbox/src/player_control.rs, physics-substrate-plan.md Phase 7 —
 # Space jumps), camera-relative to a mouse-look third-person orbit camera
-# (games/sandbox/src/camera_look.rs + camera_follow.rs) around a walled
-# arena with a fixed obstacle pillar. See ADR-0010 and ROADMAP.md Phase 8.
-# Three gold pickups are scripted
-# (games/sandbox/scripts/pickup.lua, see ADR-0013 and Phase 6): walk up to
-# one (a real rapier sensor overlap) and hold E to collect it — the first
-# content actually using Weft's scripting API in a real, live-playable game
-# rather than a batch test fixture. A HUD counter ("Pickups: N/3", see
-# ADR-0014) shows progress on screen — the first use of Weft's
-# text-rendering/minimal-UI layer in a real game.
+# (games/sandbox/src/camera_look.rs + camera_follow.rs). See ADR-0010 and
+# ROADMAP.md Phase 8.
 #
-# A kinematic "moving_platform" entity oscillates on a sine wave (see
-# games/sandbox/src/moving_platform.rs, physics-substrate-plan.md Phase 5) —
-# the first live proof of a KinematicPositionBased body outside a unit test.
+# Five gold pickups are scripted (games/sandbox/scripts/pickup.lua, see
+# ADR-0013 and Phase 6): walk up to one (a real rapier sensor overlap) and
+# hold E to collect it. Two of the five sit in the back room, so the gate
+# actually gates something. A HUD counter ("Pickups: N/5", see ADR-0014)
+# shows progress on screen.
+#
+# The "gate" blocking the back room is opened by the "lever" entity
+# (games/sandbox/scripts/lever.lua) — a second, deliberately different
+# interaction from the pickups: instead of engine.overlapping (proximity),
+# holding E near the lever casts a real engine.raycast from the lever
+# toward the player and only opens the gate (finds it by its Gate marker
+# component, games/sandbox/src/gate.rs, and despawns it) when that ray
+# reports the player as the unobstructed hit — a real line-of-sight check,
+# not just a distance check. This is games/sandbox's first live use of
+# engine.raycast; previously only engine-physics's own unit tests exercised
+# it. The lever is a one-shot switch, same "collected == gone" idiom
+# pickup.lua already uses.
+#
+# Two kinematic "moving_platform"/"moving_platform_2" entities oscillate on
+# a sine wave along different axes (see games/sandbox/src/
+# moving_platform.rs, physics-substrate-plan.md Phase 5) — proof the
+# mechanism generalizes beyond one hardcoded instance, not just a single
+# fixed demo.
+#
+# Every obstacle now authors explicit Material.roughness/metallic (ADR-0019
+# Phase 1) instead of relying on the matte default — the "steel" pillars
+# actually read as metallic under the real Cook-Torrance BRDF, the wood
+# crates as rough/non-metallic, and the gate as a low-roughness, mid-
+# metallic warning-colored barrier. Two point Lights ("lamp_backroom",
+# "lamp_platform" — ADR-0019 Phase 4) join the directional "sun", the first
+# live use of point lights in games/sandbox; total lights (1 directional +
+# 2 point = 3) stay under the fixed 4-light cap, and only "sun" casts a
+# shadow, so RenderError::TooManyLights/MultipleShadowCasters never trip.
 #
 # System order matters: "camera_look" (mouse-look, updates the camera's
 # yaw/pitch from this tick's mouse motion) must run before "player_control",
 # so camera-relative WASD movement uses this tick's fresh yaw, not last
-# tick's. "player_control" and "moving_platform" must both run before
-# "physics" — they each stage a pending change (a kinematic target, via
-# PhysicsState::move_character/set_character_rotation/
+# tick's. "player_control" and both "moving_platform"/"moving_platform_2"
+# must run before "physics" — they each stage a pending change (a kinematic
+# target, via PhysicsState::move_character/set_character_rotation/
 # set_kinematic_translation) on a rigid body that "physics" consumes when it
 # steps the world. "camera_follow" (camera placement) must run after
 # "physics" so it reads the player's post-physics position for this tick,
-# not last tick's. Script dispatch (the pickups) is automatic —
-# any scene with a Script component gets one, no [[system]] entry needed.
-# "hud" runs last so it counts each tick's despawns with the least possible
-# lag (still one tick behind script dispatch, which itself runs after every
-# [[system]] here — see hud_system's doc comment). "audio" (ADR-0016) drains
-# each tick's engine.play_sound calls from the previous tick's script
-# dispatch — pickup.lua fires one the same tick it despawns a pickup, so a
-# collect always has an audible confirmation. "animation" has no ordering
-# dependency on anything else in this scene (it only reads/writes its own
-# entity's Animator/JointPalette), so it's appended last.
+# not last tick's. Script dispatch (the pickups and the lever) is
+# automatic — any scene with a Script component gets one, no [[system]]
+# entry needed. "hud" runs last so it counts each tick's despawns with the
+# least possible lag (still one tick behind script dispatch, which itself
+# runs after every [[system]] here — see hud_system's doc comment). "audio"
+# (ADR-0016) drains each tick's engine.play_sound calls from the previous
+# tick's script dispatch — pickup.lua/lever.lua both fire one the same tick
+# they despawn something, so a collect or a gate-open always has an
+# audible confirmation. "animation" has no ordering dependency on anything
+# else in this scene (it only reads/writes its own entity's
+# Animator/JointPalette), so it's appended last.
 #
-# "rig" is a decorative, always-looping skinned+animated prop (the hand-built
-# two-joint fixture from crates/engine-assets/tests/fixtures/skinned.gltf,
-# per debt-cleanup-plan.md Phase 8 — no rigged asset-gen pipeline exists yet,
+# "rig" is a decorative, always-looping skinned+animated prop (the
+# hand-built two-joint fixture from
+# crates/engine-assets/tests/fixtures/skinned.gltf, per
+# debt-cleanup-plan.md Phase 8 — no rigged asset-gen pipeline exists yet,
 # see ADR-0015's "revisit when" note) and "ambience" is a looping background
 # AudioSource — both exist purely to give animation/looping-audio real
 # cross-subsystem coverage in a live game scene, not isolated crate fixtures.
@@ -52,71 +80,162 @@ sfx = 1.0
 name = "ground"
 [entity.components.Transform]
 position = [0.0, 0.0, 0.0]
-scale = [5.0, 1.0, 5.0]
+scale = [8.5, 1.0, 8.5]
 [entity.components.RigidBody]
 body_type = "fixed"
 [entity.components.Collider]
-shape = { kind = "box", half_extents = [10.0, 0.1, 10.0] }
+shape = { kind = "box", half_extents = [17.0, 0.1, 17.0] }
 [entity.components.MeshRef]
 mesh = "plane"
 [entity.components.Material]
 color = [0.3, 0.32, 0.35]
+roughness = 0.9
+metallic = 0.0
 
 [[entity]]
 name = "wall_north"
 [entity.components.Transform]
-position = [0.0, 1.0, -9.5]
-scale = [20.0, 2.0, 1.0]
+position = [0.0, 1.0, -16.5]
+scale = [34.0, 2.0, 1.0]
 [entity.components.RigidBody]
 body_type = "fixed"
 [entity.components.Collider]
-shape = { kind = "box", half_extents = [10.0, 1.0, 0.5] }
+shape = { kind = "box", half_extents = [17.0, 1.0, 0.5] }
 [entity.components.MeshRef]
 mesh = "cube"
 [entity.components.Material]
 color = [0.5, 0.5, 0.55]
+roughness = 0.75
+metallic = 0.05
 
 [[entity]]
 name = "wall_south"
 [entity.components.Transform]
-position = [0.0, 1.0, 9.5]
-scale = [20.0, 2.0, 1.0]
+position = [0.0, 1.0, 16.5]
+scale = [34.0, 2.0, 1.0]
 [entity.components.RigidBody]
 body_type = "fixed"
 [entity.components.Collider]
-shape = { kind = "box", half_extents = [10.0, 1.0, 0.5] }
+shape = { kind = "box", half_extents = [17.0, 1.0, 0.5] }
 [entity.components.MeshRef]
 mesh = "cube"
 [entity.components.Material]
 color = [0.5, 0.5, 0.55]
+roughness = 0.75
+metallic = 0.05
 
 [[entity]]
 name = "wall_east"
 [entity.components.Transform]
-position = [9.5, 1.0, 0.0]
-scale = [1.0, 2.0, 20.0]
+position = [16.5, 1.0, 0.0]
+scale = [1.0, 2.0, 34.0]
 [entity.components.RigidBody]
 body_type = "fixed"
 [entity.components.Collider]
-shape = { kind = "box", half_extents = [0.5, 1.0, 10.0] }
+shape = { kind = "box", half_extents = [0.5, 1.0, 17.0] }
 [entity.components.MeshRef]
 mesh = "cube"
 [entity.components.Material]
 color = [0.5, 0.5, 0.55]
+roughness = 0.75
+metallic = 0.05
 
 [[entity]]
 name = "wall_west"
 [entity.components.Transform]
-position = [-9.5, 1.0, 0.0]
-scale = [1.0, 2.0, 20.0]
+position = [-16.5, 1.0, 0.0]
+scale = [1.0, 2.0, 34.0]
 [entity.components.RigidBody]
 body_type = "fixed"
 [entity.components.Collider]
-shape = { kind = "box", half_extents = [0.5, 1.0, 10.0] }
+shape = { kind = "box", half_extents = [0.5, 1.0, 17.0] }
 [entity.components.MeshRef]
 mesh = "cube"
 [entity.components.Material]
 color = [0.5, 0.5, 0.55]
+roughness = 0.75
+metallic = 0.05
+
+[[entity]]
+name = "wall_inner_west"
+# Flanks "gate" below, leaving a 3-unit gap at the arena's midline — splits
+# the arena into the main area (positive-ish/south of z=-8) and the gated
+# back room (z < -8, up to wall_north at z=-16.5).
+[entity.components.Transform]
+position = [-9.0, 1.0, -8.0]
+scale = [15.0, 2.0, 1.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [7.5, 1.0, 0.5] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.5, 0.5, 0.55]
+roughness = 0.75
+metallic = 0.05
+
+[[entity]]
+name = "wall_inner_east"
+[entity.components.Transform]
+position = [9.0, 1.0, -8.0]
+scale = [15.0, 2.0, 1.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [7.5, 1.0, 0.5] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.5, 0.5, 0.55]
+roughness = 0.75
+metallic = 0.05
+
+[[entity]]
+name = "gate"
+# Fills the 3-unit gap between wall_inner_west/east. A real solid (non-
+# sensor) collider, not a sensor — it actually blocks the player until
+# "lever" despawns it. Low roughness/mid metallic + a saturated warning
+# color so it visually reads as "barrier", distinct from the plain gray
+# walls either side of it.
+[entity.components.Transform]
+position = [0.0, 1.0, -8.0]
+scale = [3.0, 2.0, 1.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [1.5, 1.0, 0.5] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.85, 0.35, 0.1]
+roughness = 0.25
+metallic = 0.6
+[entity.components.Gate]
+
+[[entity]]
+name = "lever"
+# On the accessible (main-area) side of "gate". A real solid collider (so
+# engine.raycast can actually hit it/be cast from it meaningfully) rather
+# than a sensor like the pickups — see scripts/lever.lua. Bright,
+# low-metallic material so it visually reads as "interactive" next to the
+# gate's warning color.
+[entity.components.Transform]
+position = [0.0, 0.6, -6.3]
+scale = [0.6, 1.2, 0.3]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [0.3, 0.6, 0.15] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.2, 0.9, 0.3]
+roughness = 0.5
+metallic = 0.0
+[entity.components.Script]
+path = "scripts/lever.lua"
+function = "on_tick"
 
 [[entity]]
 name = "pillar"
@@ -134,8 +253,13 @@ shape = { kind = "box", half_extents = [0.75, 1.0, 0.75] }
 # to its unit-cube base that the existing half_extents still fit.
 [entity.components.MeshRef]
 mesh = { asset = "9fa2a8c25ec822085f1cbcfb7b68f162521bc6f60a178e6317b219c121fa29b3" }
+tangent = "3d9faee887370ddcc7a128357546d224c845c7a691af9f67807d2830d53a28f0"
 [entity.components.Material]
 color = [0.450000, 0.300000, 0.160000]
+roughness = 0.85
+metallic = 0.0
+normal_texture = "1bd4960ce4eaa45dad292e80aa3c70815166913a78b5dace102dce40c184fa5f"
+normal_scale = 1.0
 
 [[entity]]
 name = "pillar_steel"
@@ -150,16 +274,81 @@ shape = { kind = "box", half_extents = [0.75, 1.0, 0.75] }
 # with --color/--bevel-width now exposed as parameters — proves the
 # headless-Blender pattern generalizes to a small deterministic kit of
 # variants instead of one fixed asset (the "prop kit" case ADR-0009 calls
-# out as headless scripting's natural fit).
+# out as headless scripting's natural fit). roughness/metallic now
+# actually make this look like steel next to the crates' rough wood.
 [entity.components.MeshRef]
 mesh = { asset = "cfd8be5091c1bfeaa3b98b3d4a5bdc918e7c31d4de0c980a795579ef568a7365" }
+tangent = "3d9faee887370ddcc7a128357546d224c845c7a691af9f67807d2830d53a28f0"
 [entity.components.Material]
 color = [0.500000, 0.500000, 0.550000]
+roughness = 0.3
+metallic = 0.85
+normal_texture = "1bd4960ce4eaa45dad292e80aa3c70815166913a78b5dace102dce40c184fa5f"
+normal_scale = 1.0
+
+[[entity]]
+name = "pillar_crate_2"
+[entity.components.Transform]
+position = [10.0, 1.0, -3.0]
+scale = [1.5, 2.0, 1.5]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [0.75, 1.0, 0.75] }
+[entity.components.MeshRef]
+mesh = { asset = "9fa2a8c25ec822085f1cbcfb7b68f162521bc6f60a178e6317b219c121fa29b3" }
+tangent = "3d9faee887370ddcc7a128357546d224c845c7a691af9f67807d2830d53a28f0"
+[entity.components.Material]
+color = [0.450000, 0.300000, 0.160000]
+roughness = 0.85
+metallic = 0.0
+normal_texture = "1bd4960ce4eaa45dad292e80aa3c70815166913a78b5dace102dce40c184fa5f"
+normal_scale = 1.0
+
+[[entity]]
+name = "pillar_steel_2"
+[entity.components.Transform]
+position = [-10.0, 1.0, 8.0]
+scale = [1.5, 2.0, 1.5]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [0.75, 1.0, 0.75] }
+[entity.components.MeshRef]
+mesh = { asset = "cfd8be5091c1bfeaa3b98b3d4a5bdc918e7c31d4de0c980a795579ef568a7365" }
+tangent = "3d9faee887370ddcc7a128357546d224c845c7a691af9f67807d2830d53a28f0"
+[entity.components.Material]
+color = [0.500000, 0.500000, 0.550000]
+roughness = 0.3
+metallic = 0.85
+normal_texture = "1bd4960ce4eaa45dad292e80aa3c70815166913a78b5dace102dce40c184fa5f"
+normal_scale = 1.0
+
+[[entity]]
+name = "pillar_crate_3"
+# A bigger crate stack — same imported mesh, scaled up, to break up the
+# uniform obstacle silhouette a little.
+[entity.components.Transform]
+position = [6.0, 1.5, 12.0]
+scale = [2.0, 3.0, 2.0]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [1.0, 1.5, 1.0] }
+[entity.components.MeshRef]
+mesh = { asset = "9fa2a8c25ec822085f1cbcfb7b68f162521bc6f60a178e6317b219c121fa29b3" }
+tangent = "3d9faee887370ddcc7a128357546d224c845c7a691af9f67807d2830d53a28f0"
+[entity.components.Material]
+color = [0.450000, 0.300000, 0.160000]
+roughness = 0.85
+metallic = 0.0
+normal_texture = "1bd4960ce4eaa45dad292e80aa3c70815166913a78b5dace102dce40c184fa5f"
+normal_scale = 1.0
 
 [[entity]]
 name = "moving_platform"
 [entity.components.Transform]
-position = [4.0, 1.0, 0.0]
+position = [12.0, 1.0, 4.0]
 scale = [2.0, 0.3, 2.0]
 [entity.components.RigidBody]
 body_type = "kinematic_position_based"
@@ -169,16 +358,42 @@ shape = { kind = "box", half_extents = [1.0, 0.15, 1.0] }
 mesh = "cube"
 [entity.components.Material]
 color = [0.6, 0.6, 0.2]
+roughness = 0.4
+metallic = 0.3
 [entity.components.MovingPlatform]
-origin = [4.0, 1.0, 0.0]
+origin = [12.0, 1.0, 4.0]
 axis = [1.0, 0.0, 0.0]
 amplitude = 3.0
 period = 4.0
 
 [[entity]]
+name = "moving_platform_2"
+# A second instance on a different axis/period — proves the mechanism
+# generalizes beyond the one hardcoded demo the arena originally shipped
+# with (physics-substrate-plan.md Phase 5).
+[entity.components.Transform]
+position = [-12.0, 1.0, 10.0]
+scale = [2.0, 0.3, 2.0]
+[entity.components.RigidBody]
+body_type = "kinematic_position_based"
+[entity.components.Collider]
+shape = { kind = "box", half_extents = [1.0, 0.15, 1.0] }
+[entity.components.MeshRef]
+mesh = "cube"
+[entity.components.Material]
+color = [0.6, 0.6, 0.2]
+roughness = 0.4
+metallic = 0.3
+[entity.components.MovingPlatform]
+origin = [-12.0, 1.0, 10.0]
+axis = [0.0, 0.0, 1.0]
+amplitude = 4.0
+period = 5.0
+
+[[entity]]
 name = "pickup_1"
 [entity.components.Transform]
-position = [4.0, 0.4, 4.0]
+position = [8.0, 0.4, 10.0]
 scale = [0.3, 0.3, 0.3]
 [entity.components.RigidBody]
 body_type = "fixed"
@@ -197,7 +412,7 @@ function = "on_tick"
 [[entity]]
 name = "pickup_2"
 [entity.components.Transform]
-position = [-4.0, 0.4, -3.0]
+position = [-9.0, 0.4, 6.0]
 scale = [0.3, 0.3, 0.3]
 [entity.components.RigidBody]
 body_type = "fixed"
@@ -216,7 +431,47 @@ function = "on_tick"
 [[entity]]
 name = "pickup_3"
 [entity.components.Transform]
-position = [0.0, 0.4, -6.5]
+position = [3.0, 0.4, -5.0]
+scale = [0.3, 0.3, 0.3]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "sphere", radius = 0.7 }
+sensor = true
+[entity.components.MeshRef]
+mesh = "sphere"
+[entity.components.Material]
+color = [0.9, 0.75, 0.1]
+[entity.components.Script]
+path = "scripts/pickup.lua"
+function = "on_tick"
+[entity.components.Pickup]
+
+[[entity]]
+name = "pickup_4"
+# In the gated back room — reaching it requires opening "gate" via
+# "lever" first.
+[entity.components.Transform]
+position = [-6.0, 0.4, -12.0]
+scale = [0.3, 0.3, 0.3]
+[entity.components.RigidBody]
+body_type = "fixed"
+[entity.components.Collider]
+shape = { kind = "sphere", radius = 0.7 }
+sensor = true
+[entity.components.MeshRef]
+mesh = "sphere"
+[entity.components.Material]
+color = [0.9, 0.75, 0.1]
+[entity.components.Script]
+path = "scripts/pickup.lua"
+function = "on_tick"
+[entity.components.Pickup]
+
+[[entity]]
+name = "pickup_5"
+[entity.components.Transform]
+position = [6.0, 0.4, -14.0]
 scale = [0.3, 0.3, 0.3]
 [entity.components.RigidBody]
 body_type = "fixed"
@@ -235,7 +490,7 @@ function = "on_tick"
 [[entity]]
 name = "player"
 [entity.components.Transform]
-position = [0.0, 2.0, 4.0]
+position = [0.0, 2.0, 14.0]
 # physics-substrate-plan.md Phase 7: a real kinematic character controller
 # (PhysicsState::move_character) replaces the original force-driven rolling
 # sphere — wall sliding, step handling, and ground snapping now come from
@@ -258,11 +513,12 @@ color = [0.85, 0.2, 0.2]
 
 [[entity]]
 name = "sun"
-# Visual-realism Phase 4/5: the arena's only scene-authored light, replacing
-# the engine's old hardcoded fallback directional light now that a real one
-# exists. `casts_shadow = true` makes this the arena's shadow caster (Phase
-# 5) — the orthographic shadow frustum (fixed 20-unit half-extent, see
-# `SHADOW_ORTHO_HALF_EXTENT` in gpu.rs) comfortably covers this 20x20 arena.
+# Visual-realism Phase 4/5: the arena's only scene-authored shadow-casting
+# light, replacing the engine's old hardcoded fallback directional light.
+# `casts_shadow = true` makes this the arena's shadow caster (Phase 5) —
+# the orthographic shadow frustum (SHADOW_ORTHO_HALF_EXTENT in gpu.rs,
+# bumped to 26.0 to cover this arena's larger ~34x34 footprint) comfortably
+# covers this arena, centered on the camera's fixed `target` below.
 [entity.components.Transform]
 position = [0.0, 0.0, 0.0]
 [entity.components.Light]
@@ -271,6 +527,32 @@ direction = [-0.4, -0.8, -0.3]
 color = [1.0, 0.97, 0.9]
 intensity = 0.9
 casts_shadow = true
+
+[[entity]]
+name = "lamp_backroom"
+# First live point Light in games/sandbox (ADR-0019 Phase 4) — also gives
+# the back room a reason to look different from the sun-lit main area,
+# since the gate blocks most of the sun's grazing angle from reaching it.
+[entity.components.Transform]
+position = [0.0, 3.0, -12.0]
+[entity.components.Light]
+type = "point"
+range = 12.0
+color = [1.0, 0.75, 0.45]
+intensity = 1.4
+
+[[entity]]
+name = "lamp_platform"
+# Second point Light — cooler color, over the moving-platform area, so the
+# two point lights read as visually distinct from each other and from the
+# sun. Total lights: 1 directional + 2 point = 3, under the 4-light cap.
+[entity.components.Transform]
+position = [12.0, 4.0, 4.0]
+[entity.components.Light]
+type = "point"
+range = 10.0
+color = [0.55, 0.75, 1.0]
+intensity = 1.1
 
 [[entity]]
 name = "camera"
@@ -315,7 +597,7 @@ name = "hud"
 # not just the zero-config default (games/sandbox/assets-src/
 # PressStart2P-Regular.ttf, OFL-licensed, imported via `engine import`).
 [entity.components.Text]
-content = "Pickups: 0/3"
+content = "Pickups: 0/5"
 x = 16.0
 y = 16.0
 size = 20.0
