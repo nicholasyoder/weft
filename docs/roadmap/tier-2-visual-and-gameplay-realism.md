@@ -6,21 +6,28 @@ The "realistic graphics" half of the original ask, plus the physics/gameplay-que
 
 ---
 
-## PBR material model
+## PBR material model — **done** (2026-09-04)
 
-`Material` today is a flat base color plus one optional texture, and the shader is Lambertian diffuse plus a flat ambient term — not physically based at all. Add roughness/metallic (and, once there's a concrete need, emissive) to both the component data and the shader. Matching import support in `engine-assets` (currently base-color-only, per [ADR-0005](../decisions/0005-asset-pipeline.md)) is part of the same piece of work, not a separate one later — a PBR shader with nothing feeding it real material data isn't useful on its own.
+## Normal mapping — **done** (2026-09-04)
 
-## Normal mapping
+## Multiple, scene-authorable lights — **done** (2026-09-04)
 
-Structurally blocked today: `Vertex` carries `position`/`normal`/`uv` with no tangent. Pairs naturally with the PBR work above, since both touch the vertex format and the material/shader pipeline in the same pass.
+## Shadow mapping — **done** (2026-09-04)
 
-## Multiple, scene-authorable lights
+See [ADR-0019](../decisions/0019-pbr-lighting-and-shadows.md) for the full design record (the phased plan that built this, `visual-realism-plan.md`, is retired — `git log`/the ADR are its permanent record, same pattern `physics-substrate-plan.md`/`debt-cleanup-plan.md` used).
 
-The one directional light that exists is a hardcoded constant in `gpu.rs`, not a component — no scene can place, color, or add a second one, and there's no point/spot light at all. Needed before any scene can look like more than "one fixed sun."
+`Material` now carries `roughness`/`metallic` (plus optional metallic-roughness and normal-map textures), shaded via a metallic-roughness Cook-Torrance BRDF; a scene-authorable `Light` component supports up to 4 directional/point lights; one directional light per scene may set `casts_shadow` for a real shadow-map pass. `games/sandbox`'s `playground.toml` authors a real shadow-casting sun light, proving the whole arc in live gameplay.
 
-## Shadow mapping
+**Still open, not silently lost:**
 
-No shadow pass exists yet. Natural to sequence after multi-light support lands, since a shadow implementation needs to decide which light(s) actually cast shadows.
+- **Spot lights** — no concrete consumer needs one yet.
+- **More than 4 lights per scene, or more than one shadow-casting light** — `RenderError::TooManyLights`/`MultipleShadowCasters` are structured errors, not silent truncation.
+- **Point-light shadows** — would need a 6-pass cubemap; only directional shadow casting exists.
+- **Scene-bounds-fitted or cascaded shadow volumes** — today's shadow volume is a fixed-extent orthographic frustum centered on the camera target.
+- **Per-object shadow-casting opt-out** — every drawable casts a shadow unconditionally.
+- **Soft/PCF-filtered shadows** — today's shadow sampling is single-tap comparison sampling.
+- **Environment/IBL lighting** — the flat `ambient = 0.15` term remains a placeholder.
+- **Per-frame buffer/bind-group pooling (ADR-0019's Phase 6) is entity-keyed but not yet exploited by the one-shot render paths** (`render_scene`/`render_scene_with_context`), which never get a "next frame" to amortize across.
 
 ## Physics gameplay substrate — **done** (2026-09-03)
 
