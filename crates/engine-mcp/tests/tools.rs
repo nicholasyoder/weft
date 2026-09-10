@@ -279,9 +279,9 @@ async fn structured_errors_survive_the_mcp_boundary() {
 /// Probes what happens when `rmcp`'s own JSON-schema deserialization
 /// rejects a call *before* a tool body runs — `RunParams.scene` is
 /// required, so an empty arguments object never reaches `WeftServer::run`
-/// at all. This bypasses `CliError` entirely; AGENTS.md calls an
-/// unobserved case here "a bug worth filing," so this test exists to pin
-/// down and assert on whatever the actual current behavior is.
+/// at all. `WeftServer::call_tool` (see its doc comment) intercepts this
+/// shape and re-wraps it as a `CliError`, so it should look exactly like
+/// any other tool-body failure to a caller.
 #[tokio::test]
 async fn missing_required_field_is_rejected_before_the_tool_body_runs() {
     let client = connect().await;
@@ -290,30 +290,13 @@ async fn missing_required_field_is_rejected_before_the_tool_body_runs() {
         .call_tool(CallToolRequestParams::new("weft_run").with_arguments(args(json!({}))))
         .await
         .unwrap();
-
-    // Confirmed by running this test: rmcp's `Parameters<T>` extractor
-    // rejects this itself, before `WeftServer::run` ever executes, as a
-    // tool-level result (not a protocol-level `Err` — `call_tool` above
-    // still returns `Ok`). It fails loudly (`is_error: Some(true)`, a
-    // human-readable "missing field `scene`" message) rather than silently
-    // no-oping or panicking, so it satisfies AGENTS.md's core "fails
-    // loudly" goal. But its shape doesn't match this crate's own
-    // documented contract (the module doc comment's "error payload is
-    // always `{\"error\": {code, message, context}}`"): there is no
-    // `structured_content` at all here, just a plain-text `content`
-    // message with no `error.code` a caller could match on. Asserting on
-    // this pinned, real gap rather than papering over it — see
-    // known-issues.md.
     assert_eq!(result.is_error, Some(true), "{result:?}");
+    let error = &result.structured_content.unwrap()["error"];
+    assert_eq!(error["code"], "INVALID_PARAMS");
+    let message = error["message"].as_str().unwrap();
     assert!(
-        result.structured_content.is_none(),
-        "expected no structured_content for a pre-tool-body schema rejection, got: {result:?}"
-    );
-    let text = result.content.first().and_then(|c| c.as_text()).unwrap();
-    assert!(
-        text.text.contains("scene"),
-        "expected the rejection message to mention the missing field, got: {}",
-        text.text
+        message.contains("scene"),
+        "expected the rejection message to mention the missing field, got: {message}",
     );
 
     client.cancel().await.ok();

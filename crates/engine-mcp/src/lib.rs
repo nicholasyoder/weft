@@ -14,14 +14,30 @@
 //! exact `Serialize` shape of `engine_cli::diagnostics::CliError` — the
 //! same envelope `engine`'s own `--format json` mode prints to stderr, so
 //! the diagnostics contract is identical on both surfaces.
+//!
+//! That envelope covers every error a tool body can produce, but not one
+//! `rmcp` produces itself: a call whose arguments don't match the tool's
+//! declared JSON schema (a missing required field, a wrong type) is rejected
+//! by `rmcp`'s own `Parameters<T>` extractor before a tool body ever runs,
+//! as a plain-text `CallToolResult::error(...)` with no `structured_content`
+//! (see `into_tool_argument_error` in `rmcp::handler::server::router::tool`).
+//! `WeftServer::call_tool` below intercepts exactly that shape — `is_error`
+//! but no `structured_content`, which no tool body here ever produces on its
+//! own — and re-wraps it as a `CliError::invalid_params` so the envelope
+//! really is uniform across every failure, not just the ones tool bodies
+//! produce.
 
 use engine_cli::diagnostics::CliError;
 use engine_cli::recording::Recording;
 use engine_cli::SimSource;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ServerCapabilities, ServerInfo};
-use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ServerCapabilities, ServerInfo,
+};
+use rmcp::service::RequestContext;
+use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -31,6 +47,24 @@ fn ok(value: serde_json::Value) -> CallToolResult {
 
 fn err(e: CliError) -> CallToolResult {
     CallToolResult::structured_error(json!({ "error": e }))
+}
+
+/// Detects and re-wraps `rmcp`'s pre-tool-body schema-rejection shape (see
+/// the module doc comment): `is_error` with no `structured_content` is a
+/// combination no tool body in this crate ever produces on its own — every
+/// domain error here goes through `err()` above, which always sets
+/// `structured_content`. Anything else passes through untouched.
+fn rewrap_schema_rejection(result: CallToolResult) -> CallToolResult {
+    if result.is_error != Some(true) || result.structured_content.is_some() {
+        return result;
+    }
+    let message = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.clone())
+        .unwrap_or_else(|| "invalid tool arguments".to_string());
+    err(CliError::invalid_params(message))
 }
 
 /// Resolves a `scenario`/`scene` pair the way `test`/`inspect`'s CLI clap
@@ -416,6 +450,23 @@ impl WeftServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for WeftServer {
+    /// Hand-written (rather than macro-generated) so the response can be
+    /// inspected on the way out — see the module doc comment for why.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let tcc = ToolCallContext::new(self, request, context);
+        let response = self.tool_router.call(tcc).await?;
+        Ok(match response {
+            CallToolResponse::Complete(result) => {
+                CallToolResponse::Complete(rewrap_schema_rejection(result))
+            }
+            other => other,
+        })
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "Weft engine MCP server. Seven tools (weft_run, weft_test, weft_inspect, \

@@ -42,6 +42,15 @@ impl CliError {
         )
     }
 
+    /// For a request that never reached command-specific validation at all —
+    /// e.g. `engine-mcp`'s MCP transport rejecting a tool call whose
+    /// arguments don't match the tool's declared schema (a missing required
+    /// field, a wrong type) before the tool body runs. `message` is
+    /// transport-supplied and already human-readable.
+    pub fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new("INVALID_PARAMS", message)
+    }
+
     pub fn recording_read_failed(path: &str, source: &std::io::Error) -> Self {
         Self::new(
             "RECORDING_READ_ERROR",
