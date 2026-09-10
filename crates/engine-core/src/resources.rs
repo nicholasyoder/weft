@@ -46,6 +46,45 @@ impl Resources {
             .and_then(|b| b.downcast::<T>().ok())
             .map(|b| *b)
     }
+
+    /// Accesses a resource some `Sim` construction path guarantees is
+    /// always present (e.g. `Sim::new` seeding `AudioSettings`/
+    /// `EnvironmentSettings` — see its doc comment) rather than one a
+    /// caller must treat as genuinely optional (e.g. `AssetsDir`, only
+    /// present once a scene/scenario supplies one). `get`/`get_mut` make
+    /// every resource look equally optional regardless of which kind it
+    /// is, pushing call sites for always-present resources toward
+    /// `.unwrap_or_default()`-style fallbacks that silently paper over a
+    /// bug if the guarantee is ever violated. `required`/`required_mut`
+    /// make that guarantee explicit at the call site and fail loudly
+    /// instead: panics if `T` isn't present, since that means the
+    /// guarantee was actually broken, not that the caller hit a normal
+    /// "not configured yet" state.
+    pub fn required<T: 'static>(&self) -> &T {
+        self.get::<T>().unwrap_or_else(|| {
+            panic!(
+                "Resources::required::<{}>() called but no value is present \
+                 — this resource is documented as always present, so its \
+                 absence means whatever was supposed to seed it (e.g. \
+                 Sim::new) didn't run",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+
+    /// Mutable counterpart to [`Resources::required`] — see its doc
+    /// comment.
+    pub fn required_mut<T: 'static>(&mut self) -> &mut T {
+        self.get_mut::<T>().unwrap_or_else(|| {
+            panic!(
+                "Resources::required_mut::<{}>() called but no value is \
+                 present — this resource is documented as always present, \
+                 so its absence means whatever was supposed to seed it \
+                 (e.g. Sim::new) didn't run",
+                std::any::type_name::<T>()
+            )
+        })
+    }
 }
 
 #[cfg(test)]
@@ -117,5 +156,34 @@ mod tests {
     fn remove_on_absent_type_returns_none() {
         let mut resources = Resources::new();
         assert_eq!(resources.remove::<Counter>(), None);
+    }
+
+    #[test]
+    fn required_returns_the_value_when_present() {
+        let mut resources = Resources::new();
+        resources.insert(Counter(3));
+        assert_eq!(resources.required::<Counter>(), &Counter(3));
+    }
+
+    #[test]
+    fn required_mut_allows_in_place_mutation() {
+        let mut resources = Resources::new();
+        resources.insert(Counter(1));
+        resources.required_mut::<Counter>().0 += 41;
+        assert_eq!(resources.get::<Counter>(), Some(&Counter(42)));
+    }
+
+    #[test]
+    #[should_panic(expected = "Resources::required")]
+    fn required_panics_when_absent() {
+        let resources = Resources::new();
+        resources.required::<Counter>();
+    }
+
+    #[test]
+    #[should_panic(expected = "Resources::required_mut")]
+    fn required_mut_panics_when_absent() {
+        let mut resources = Resources::new();
+        resources.required_mut::<Counter>();
     }
 }

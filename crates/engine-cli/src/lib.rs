@@ -296,11 +296,7 @@ pub fn render_scene(
         build_sim_with_assets_dir(SimSource::Scene(scene.to_path_buf()), seed, assets_dir)?;
     sim.run(ticks)
         .map_err(|(name, e)| CliError::from_system_error(&name, sim.tick, &e))?;
-    let environment = sim
-        .resources
-        .get::<engine_core::EnvironmentSettings>()
-        .copied()
-        .unwrap_or_default();
+    let environment = *sim.resources.required::<engine_core::EnvironmentSettings>();
     engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to, environment)
         .map_err(|e| CliError::from_render_error(&e))
 }

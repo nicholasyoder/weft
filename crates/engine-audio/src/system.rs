@@ -168,11 +168,7 @@ pub fn audio_step(args: &mut SystemArgs) -> Result<(), SystemError> {
     let Some(assets_dir) = args.resources.get::<AssetsDir>().map(|a| a.0.clone()) else {
         return Ok(());
     };
-    let settings = args
-        .resources
-        .get::<AudioSettings>()
-        .copied()
-        .unwrap_or_default();
+    let settings = *args.resources.required::<AudioSettings>();
     let store = AssetStore::new(assets_dir);
     let state = args.resources.get_or_insert_with(AudioState::default);
 

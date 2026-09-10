@@ -6,4 +6,4 @@
 
 ## Architectural debt worth addressing before it compounds
 
-- **`Resources` (`engine-core/src/resources.rs`) is an `Option`-typed grab-bag** with no compile-time distinction between "always present" (e.g. `AudioSettings`) and "genuinely optional" (e.g. `AssetsDir`) resources — that distinction lives only in doc comments. A heavier required/optional struct split was considered and deliberately deferred; `Resources::remove::<T>()` already closes the sharpest edge (a resource no longer has to live for the `Sim`'s full lifetime).
+Currently empty.
