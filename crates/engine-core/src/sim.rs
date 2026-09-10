@@ -12,11 +12,22 @@ pub struct Sim {
 }
 
 impl Sim {
+    /// Every `Sim`, regardless of how it was built (hardcoded scenario or
+    /// scene file), gets `AudioSettings`/`EnvironmentSettings` up front so
+    /// `audio_step` and rendering never have to special-case their absence.
+    /// A scene file's `[audio]`/`[environment]` tables simply overwrite
+    /// these defaults afterward (`engine_scene::load`); a hardcoded
+    /// scenario, which never goes through a scene file, just keeps them.
+    /// Centralizing the defaults here means a scenario never has to
+    /// mirror them manually — see `SimSource::build`'s `Scenario` arm.
     pub fn new(seed: u64, dt: f32) -> Self {
+        let mut resources = Resources::new();
+        resources.insert(crate::AudioSettings::default());
+        resources.insert(crate::EnvironmentSettings::default());
         Self {
             world: hecs::World::new(),
             rng: rng::seeded(seed),
-            resources: Resources::new(),
+            resources,
             tick: 0,
             dt,
             scheduler: Scheduler::new(),

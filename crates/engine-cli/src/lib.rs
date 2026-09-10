@@ -56,15 +56,11 @@ impl SimSource {
         let (mut sim, dumpers) = match self {
             SimSource::Scenario(name) => {
                 let s = scenarios::find(name).ok_or_else(|| CliError::unknown_scenario(name))?;
-                let mut sim = (s.build)(seed);
-                // A hardcoded scenario never goes through `engine_scene::load`
-                // (there's no `[audio]`/`[environment]` table to read), so it
-                // wouldn't otherwise get an `AudioSettings`/`EnvironmentSettings`
-                // at all — every `Sim` carries both regardless of source, same
-                // reasoning as `AssetsDir` below (see ADR-0016).
-                sim.resources.insert(engine_core::AudioSettings::default());
-                sim.resources
-                    .insert(engine_core::EnvironmentSettings::default());
+                // `Sim::new` already seeds `AudioSettings`/`EnvironmentSettings`
+                // defaults, so a hardcoded scenario — which never goes through
+                // `engine_scene::load`'s `[audio]`/`[environment]` tables — gets
+                // them for free, same as `AssetsDir` below.
+                let sim = (s.build)(seed);
                 (sim, s.dumpers.to_vec())
             }
             SimSource::Scene(path) => {
