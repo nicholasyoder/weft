@@ -1,0 +1,53 @@
+[environment]
+sky_color = [0.1, 0.3, 0.9]
+ground_color = [0.6, 0.3, 0.05]
+intensity = 0.6
+
+[[entity]]
+name = "camera"
+
+[entity.components.Transform]
+position = [2.5, 2.0, 4.0]
+
+[entity.components.Camera]
+target = [0.0, 0.0, 0.0]
+fov_y_degrees = 45.0
+
+[[entity]]
+name = "metal_sphere"
+
+[entity.components.Transform]
+position = [-1.0, 0.5, 0.5]
+
+[entity.components.MeshRef]
+mesh = "sphere"
+
+[entity.components.Material]
+color = [0.85, 0.85, 0.9]
+roughness = 0.15
+metallic = 1.0
+
+[[entity]]
+name = "ground"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.MeshRef]
+mesh = "plane"
+
+[entity.components.Material]
+color = [0.6, 0.6, 0.65]
+
+[[entity]]
+name = "sun"
+
+[entity.components.Transform]
+position = [0.0, 0.0, 0.0]
+
+[entity.components.Light]
+type = "directional"
+direction = [-0.6, -0.6, -0.3]
+color = [1.0, 1.0, 1.0]
+intensity = 1.0
+casts_shadow = true

@@ -47,6 +47,11 @@ pub fn load(
         music: scene.audio.music,
         sfx: scene.audio.sfx,
     });
+    sim.resources.insert(engine_core::EnvironmentSettings {
+        sky_color: scene.environment.sky_color,
+        ground_color: scene.environment.ground_color,
+        intensity: scene.environment.intensity,
+    });
 
     for entity in &scene.entities {
         let mut builder = hecs::EntityBuilder::new();

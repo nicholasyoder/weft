@@ -76,6 +76,14 @@ master = 1.0
 music = 1.0
 sfx = 1.0
 
+# Hemisphere ambient (see the ambient-lighting ADR) — an outdoor daylight
+# pair (cool sky, warm sunlit-ground bounce) so the arena's metallic props
+# (the pillars/lever) read correctly even away from the sun/point light.
+[environment]
+sky_color = [0.4, 0.55, 0.75]
+ground_color = [0.35, 0.3, 0.22]
+intensity = 0.4
+
 [[entity]]
 name = "ground"
 [entity.components.Transform]

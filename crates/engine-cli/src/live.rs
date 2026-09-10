@@ -337,7 +337,13 @@ impl ApplicationHandler for App<'_> {
         }
 
         if let Some(renderer) = &mut self.renderer {
-            if let Err(e) = renderer.render(&self.sim.world, &self.assets_dir) {
+            let environment = self
+                .sim
+                .resources
+                .get::<engine_core::EnvironmentSettings>()
+                .copied()
+                .unwrap_or_default();
+            if let Err(e) = renderer.render(&self.sim.world, &self.assets_dir, environment) {
                 self.error = Some(CliError::from_render_error(&e));
                 event_loop.exit();
                 return;

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use engine_core::Transform;
-use engine_render::{render_scene, Camera, Material, MeshKind, MeshRef, Text};
+use engine_render::{render_scene, Camera, EnvironmentSettings, Material, MeshKind, MeshRef, Text};
 use glam::Vec3;
 
 fn scratch_assets_dir() -> PathBuf {
@@ -52,7 +52,7 @@ fn no_camera_is_a_structured_error_not_a_panic() {
     world.spawn(cube_at(Vec3::ZERO));
 
     let assets_dir = scratch_assets_dir();
-    let err = match render_scene(&world, 32, 32, &assets_dir) {
+    let err = match render_scene(&world, 32, 32, &assets_dir, EnvironmentSettings::default()) {
         Err(e) => e,
         Ok(_) => panic!("expected an error"),
     };
@@ -66,7 +66,7 @@ fn multiple_cameras_is_a_structured_error_not_a_panic() {
     world.spawn(camera_at(Vec3::new(0.0, 0.0, -5.0)));
 
     let assets_dir = scratch_assets_dir();
-    let err = match render_scene(&world, 32, 32, &assets_dir) {
+    let err = match render_scene(&world, 32, 32, &assets_dir, EnvironmentSettings::default()) {
         Err(e) => e,
         Ok(_) => panic!("expected an error"),
     };
@@ -88,8 +88,8 @@ fn rendering_the_same_world_twice_is_byte_identical() {
     },));
 
     let assets_dir = scratch_assets_dir();
-    let a = render_scene(&world, 48, 48, &assets_dir).unwrap();
-    let b = render_scene(&world, 48, 48, &assets_dir).unwrap();
+    let a = render_scene(&world, 48, 48, &assets_dir, EnvironmentSettings::default()).unwrap();
+    let b = render_scene(&world, 48, 48, &assets_dir, EnvironmentSettings::default()).unwrap();
     assert_eq!(a.into_raw(), b.into_raw());
 }
 
@@ -107,7 +107,7 @@ fn rendering_text_with_the_default_font_produces_non_blank_output() {
     },));
 
     let assets_dir = scratch_assets_dir();
-    let image = render_scene(&world, 64, 64, &assets_dir).unwrap();
+    let image = render_scene(&world, 64, 64, &assets_dir, EnvironmentSettings::default()).unwrap();
     let clear = image.get_pixel(63, 63);
     assert!(
         image.pixels().any(|p| p != clear),
@@ -134,7 +134,7 @@ fn rendering_text_with_an_imported_custom_font_produces_non_blank_output() {
         font: Some(font_hash),
     },));
 
-    let image = render_scene(&world, 64, 64, &assets_dir).unwrap();
+    let image = render_scene(&world, 64, 64, &assets_dir, EnvironmentSettings::default()).unwrap();
     let clear = image.get_pixel(63, 63);
     assert!(
         image.pixels().any(|p| p != clear),
@@ -157,7 +157,8 @@ fn rendering_text_with_an_unknown_font_hash_is_a_structured_error() {
     },));
 
     let assets_dir = scratch_assets_dir();
-    let err = render_scene(&world, 16, 16, &assets_dir).unwrap_err();
+    let err =
+        render_scene(&world, 16, 16, &assets_dir, EnvironmentSettings::default()).unwrap_err();
     assert_eq!(err.code(), "RENDER_ASSET_ERROR");
 }
 
@@ -167,7 +168,7 @@ fn an_empty_scene_with_only_a_camera_renders_the_clear_color() {
     world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
 
     let assets_dir = scratch_assets_dir();
-    let image = render_scene(&world, 16, 16, &assets_dir).unwrap();
+    let image = render_scene(&world, 16, 16, &assets_dir, EnvironmentSettings::default()).unwrap();
     // No drawables: every pixel should be exactly the clear color.
     let first = image.get_pixel(0, 0);
     for pixel in image.pixels() {
@@ -204,7 +205,7 @@ fn rendering_an_imported_textured_mesh_produces_non_blank_output() {
         },
     ));
 
-    let image = render_scene(&world, 48, 48, &assets_dir).unwrap();
+    let image = render_scene(&world, 48, 48, &assets_dir, EnvironmentSettings::default()).unwrap();
     let clear = image.get_pixel(0, 0);
     assert!(
         image.pixels().any(|p| p != clear),
@@ -236,6 +237,7 @@ fn rendering_a_scene_with_an_unknown_asset_hash_is_a_structured_error() {
         },
     ));
 
-    let err = render_scene(&world, 16, 16, &assets_dir).unwrap_err();
+    let err =
+        render_scene(&world, 16, 16, &assets_dir, EnvironmentSettings::default()).unwrap_err();
     assert_eq!(err.code(), "RENDER_ASSET_ERROR");
 }

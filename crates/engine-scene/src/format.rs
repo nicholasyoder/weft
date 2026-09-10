@@ -35,6 +35,45 @@ impl Default for AudioMeta {
     }
 }
 
+fn default_sky_color() -> [f32; 3] {
+    [0.35, 0.45, 0.6]
+}
+
+fn default_ground_color() -> [f32; 3] {
+    [0.25, 0.22, 0.18]
+}
+
+fn default_ambient_intensity() -> f32 {
+    0.35
+}
+
+/// Scene-authorable hemisphere ambient lighting (see the ambient-lighting
+/// ADR) — a fifth top-level table alongside `meta`/`audio`/`entity`/
+/// `system`, mirroring `AudioMeta`'s own "all fields optional, sensible
+/// defaults" shape. Defaults are literal-duplicated from
+/// `engine_types::EnvironmentSettings::default()` (same stylistic
+/// convention `AudioMeta`/`AudioSettings` already established) — keep the
+/// two in sync if either is retuned.
+#[derive(Debug, Deserialize)]
+pub(crate) struct EnvironmentMeta {
+    #[serde(default = "default_sky_color")]
+    pub sky_color: [f32; 3],
+    #[serde(default = "default_ground_color")]
+    pub ground_color: [f32; 3],
+    #[serde(default = "default_ambient_intensity")]
+    pub intensity: f32,
+}
+
+impl Default for EnvironmentMeta {
+    fn default() -> Self {
+        Self {
+            sky_color: default_sky_color(),
+            ground_color: default_ground_color(),
+            intensity: default_ambient_intensity(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct EntityDef {
     pub name: String,
@@ -53,6 +92,8 @@ pub(crate) struct SceneDef {
     pub meta: Meta,
     #[serde(default)]
     pub audio: AudioMeta,
+    #[serde(default)]
+    pub environment: EnvironmentMeta,
     #[serde(default, rename = "entity")]
     pub entities: Vec<EntityDef>,
     #[serde(default, rename = "system")]

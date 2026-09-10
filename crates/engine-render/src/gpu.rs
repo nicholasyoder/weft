@@ -10,7 +10,7 @@ use crate::components::{Camera, Light, LightKind, Material, MeshKind, MeshRef, T
 use crate::error::RenderError;
 use crate::mesh::{self, SkinnedVertex, Vertex};
 use crate::text::{self, GlyphAtlas};
-use engine_core::{JointPalette, Transform};
+use engine_core::{EnvironmentSettings, JointPalette, Transform};
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -62,6 +62,11 @@ struct Lights {
     /// none. `extract_scene` guarantees at most one.
     shadow_caster_index: i32,
     _pad: [u32; 2],
+    /// Hemisphere ambient lighting (see the ambient-lighting ADR). rgb: sky
+    /// color for up-facing surfaces. w: overall ambient intensity.
+    ambient_sky: [f32; 4],
+    /// rgb: ground color for down-facing surfaces. w: unused.
+    ambient_ground: [f32; 4],
 }
 
 /// Fixed-resolution square shadow map — independent of the output
@@ -1565,6 +1570,7 @@ fn extract_scene(
     world: &hecs::World,
     width: u32,
     height: u32,
+    environment: EnvironmentSettings,
 ) -> Result<ExtractedScene, RenderError> {
     let mut cameras: Vec<_> = world
         .query::<(&Transform, &Camera)>()
@@ -1714,6 +1720,18 @@ fn extract_scene(
         count: light_count as u32,
         shadow_caster_index,
         _pad: [0; 2],
+        ambient_sky: [
+            environment.sky_color[0],
+            environment.sky_color[1],
+            environment.sky_color[2],
+            environment.intensity,
+        ],
+        ambient_ground: [
+            environment.ground_color[0],
+            environment.ground_color[1],
+            environment.ground_color[2],
+            0.0,
+        ],
     };
 
     let aspect = width as f32 / height as f32;
@@ -1746,9 +1764,10 @@ pub fn render_scene(
     width: u32,
     height: u32,
     assets_dir: &Path,
+    environment: EnvironmentSettings,
 ) -> Result<image::RgbaImage, RenderError> {
     let mut ctx = RenderContext::new_headless(wgpu::Backends::VULKAN)?;
-    render_scene_with_context(&mut ctx, world, width, height, assets_dir)
+    render_scene_with_context(&mut ctx, world, width, height, assets_dir, environment)
 }
 
 /// Like `render_scene`, but reuses an existing `RenderContext` (device,
@@ -1764,8 +1783,10 @@ pub fn render_scene_with_context(
     width: u32,
     height: u32,
     assets_dir: &Path,
+    environment: EnvironmentSettings,
 ) -> Result<image::RgbaImage, RenderError> {
-    let (view_proj, camera_pos, drawables, texts, lights) = extract_scene(world, width, height)?;
+    let (view_proj, camera_pos, drawables, texts, lights) =
+        extract_scene(world, width, height, environment)?;
 
     let color_texture = ctx.core.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("weft-color-target"),
@@ -1815,6 +1836,7 @@ pub fn render_scene_with_context(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_to_surface(
     ctx: &mut RenderContext,
     world: &hecs::World,
@@ -1823,8 +1845,10 @@ pub(crate) fn draw_to_surface(
     width: u32,
     height: u32,
     assets_dir: &Path,
+    environment: EnvironmentSettings,
 ) -> Result<wgpu::CommandBuffer, RenderError> {
-    let (view_proj, camera_pos, drawables, texts, lights) = extract_scene(world, width, height)?;
+    let (view_proj, camera_pos, drawables, texts, lights) =
+        extract_scene(world, width, height, environment)?;
     let depth_view = make_depth_view(&ctx.core.device, width, height);
     let mut encoder = ctx
         .core
@@ -2239,7 +2263,8 @@ mod tests {
         let mut world = hecs::World::new();
         world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
 
-        let (_, _, _, _, lights) = extract_scene(&world, 16, 16).unwrap();
+        let (_, _, _, _, lights) =
+            extract_scene(&world, 16, 16, EnvironmentSettings::default()).unwrap();
         assert_eq!(lights.count, 1);
         let light = lights.lights[0];
         assert_eq!(
@@ -2267,7 +2292,7 @@ mod tests {
             ));
         }
 
-        let err = match extract_scene(&world, 16, 16) {
+        let err = match extract_scene(&world, 16, 16, EnvironmentSettings::default()) {
             Err(e) => e,
             Ok(_) => panic!("expected RenderError::TooManyLights"),
         };
@@ -2300,7 +2325,8 @@ mod tests {
             },
         ));
 
-        let (_, _, _, _, lights) = extract_scene(&world, 16, 16).unwrap();
+        let (_, _, _, _, lights) =
+            extract_scene(&world, 16, 16, EnvironmentSettings::default()).unwrap();
         assert_eq!(lights.count, 2);
         assert_eq!(lights.lights[0].color_intensity, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(lights.lights[1].color_intensity, [0.0, 1.0, 0.0, 2.0]);
@@ -2326,7 +2352,7 @@ mod tests {
         world.spawn((Transform::default(), directional_light(true)));
         world.spawn((Transform::default(), directional_light(true)));
 
-        let err = match extract_scene(&world, 16, 16) {
+        let err = match extract_scene(&world, 16, 16, EnvironmentSettings::default()) {
             Err(e) => e,
             Ok(_) => panic!("expected RenderError::MultipleShadowCasters"),
         };
@@ -2349,7 +2375,7 @@ mod tests {
             },
         ));
 
-        let err = match extract_scene(&world, 16, 16) {
+        let err = match extract_scene(&world, 16, 16, EnvironmentSettings::default()) {
             Err(e) => e,
             Ok(_) => panic!("expected RenderError::UnsupportedShadowCaster"),
         };
@@ -2365,7 +2391,8 @@ mod tests {
         world.spawn(camera_at(Vec3::new(0.0, 0.0, 5.0)));
         world.spawn((Transform::default(), directional_light(false)));
 
-        let (_, _, _, _, lights) = extract_scene(&world, 16, 16).unwrap();
+        let (_, _, _, _, lights) =
+            extract_scene(&world, 16, 16, EnvironmentSettings::default()).unwrap();
         assert_eq!(lights.shadow_caster_index, -1);
     }
 }

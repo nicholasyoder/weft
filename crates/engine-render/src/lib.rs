@@ -8,6 +8,7 @@ mod window;
 use std::path::Path;
 
 pub use components::{Camera, Light, LightKind, Material, MeshKind, MeshRef, Text};
+pub use engine_core::EnvironmentSettings;
 pub use error::RenderError;
 pub use gpu::{render_scene, render_scene_with_context, RenderContext};
 pub use window::WindowRenderer;
@@ -22,8 +23,9 @@ pub fn render_scene_to_png(
     height: u32,
     assets_dir: &Path,
     path: &Path,
+    environment: EnvironmentSettings,
 ) -> Result<(), RenderError> {
-    let image = render_scene(world, width, height, assets_dir)?;
+    let image = render_scene(world, width, height, assets_dir, environment)?;
     image.save(path).map_err(|e| RenderError::EncodeFailed {
         path: path.display().to_string(),
         source: e,

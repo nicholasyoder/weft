@@ -58,11 +58,13 @@ impl SimSource {
                 let s = scenarios::find(name).ok_or_else(|| CliError::unknown_scenario(name))?;
                 let mut sim = (s.build)(seed);
                 // A hardcoded scenario never goes through `engine_scene::load`
-                // (there's no `[audio]` table to read), so it wouldn't
-                // otherwise get an `AudioSettings` at all — every `Sim`
-                // carries one regardless of source, same reasoning as
-                // `AssetsDir` below (see ADR-0016).
+                // (there's no `[audio]`/`[environment]` table to read), so it
+                // wouldn't otherwise get an `AudioSettings`/`EnvironmentSettings`
+                // at all — every `Sim` carries both regardless of source, same
+                // reasoning as `AssetsDir` below (see ADR-0016).
                 sim.resources.insert(engine_core::AudioSettings::default());
+                sim.resources
+                    .insert(engine_core::EnvironmentSettings::default());
                 (sim, s.dumpers.to_vec())
             }
             SimSource::Scene(path) => {
@@ -298,7 +300,12 @@ pub fn render_scene(
         build_sim_with_assets_dir(SimSource::Scene(scene.to_path_buf()), seed, assets_dir)?;
     sim.run(ticks)
         .map_err(|(name, e)| CliError::from_system_error(&name, sim.tick, &e))?;
-    engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to)
+    let environment = sim
+        .resources
+        .get::<engine_core::EnvironmentSettings>()
+        .copied()
+        .unwrap_or_default();
+    engine_render::render_scene_to_png(&sim.world, width, height, assets_dir, to, environment)
         .map_err(|e| CliError::from_render_error(&e))
 }
 

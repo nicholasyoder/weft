@@ -25,6 +25,9 @@ const MULTI_LIGHT_SCENE: &str = "tests/fixtures/scenes/render_multi_light.toml";
 const MULTI_LIGHT_GOLDEN: &str = "tests/fixtures/scenes/render_multi_light.golden.png";
 const SHADOW_SCENE: &str = "tests/fixtures/scenes/render_shadow.toml";
 const SHADOW_GOLDEN: &str = "tests/fixtures/scenes/render_shadow.golden.png";
+const AMBIENT_ENVIRONMENT_SCENE: &str = "tests/fixtures/scenes/render_ambient_environment.toml";
+const AMBIENT_ENVIRONMENT_GOLDEN: &str =
+    "tests/fixtures/scenes/render_ambient_environment.golden.png";
 
 /// Per-channel tolerance for the golden-image comparison. Not blind byte
 /// equality: `lavapipe`/Mesa version drift across machines can shift
@@ -347,6 +350,41 @@ fn render_of_a_shadow_casting_scene_matches_golden_image_within_tolerance() {
 
     let fresh = image::open(&out).unwrap().into_rgba8();
     let golden = image::open(SHADOW_GOLDEN).unwrap().into_rgba8();
+    assert!(
+        images_match_within_tolerance(&fresh, &golden),
+        "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"
+    );
+}
+
+/// A metallic, low-roughness sphere whose sun-facing side is lit directly
+/// while its far side gets zero direct light — proof through the real
+/// binary that hemisphere ambient (see the ambient-lighting ADR) keeps a
+/// metal's unlit side reading as an environment-tinted reflection instead
+/// of flat near-black, and that a scene's `[environment]` table actually
+/// reaches the shader.
+#[test]
+fn render_of_an_environment_lit_scene_matches_golden_image_within_tolerance() {
+    let out = scratch_png();
+    Command::cargo_bin("engine")
+        .unwrap()
+        .env_remove("DISPLAY")
+        .args([
+            "render",
+            AMBIENT_ENVIRONMENT_SCENE,
+            "--to",
+            out.to_str().unwrap(),
+            "--width",
+            "64",
+            "--height",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    let fresh = image::open(&out).unwrap().into_rgba8();
+    let golden = image::open(AMBIENT_ENVIRONMENT_GOLDEN)
+        .unwrap()
+        .into_rgba8();
     assert!(
         images_match_within_tolerance(&fresh, &golden),
         "rendered image drifted from the golden reference by more than {MAX_CHANNEL_DIFF} per channel"

@@ -11,6 +11,7 @@
 pub mod assets_dir;
 pub mod audio_events;
 pub mod audio_settings;
+pub mod environment_settings;
 pub mod input;
 pub mod joint_palette;
 pub mod mouse;
@@ -19,6 +20,7 @@ pub mod transform;
 pub use assets_dir::AssetsDir;
 pub use audio_events::{SoundEvent, SoundEventQueue};
 pub use audio_settings::AudioSettings;
+pub use environment_settings::EnvironmentSettings;
 pub use input::{Input, KeyCode};
 pub use joint_palette::JointPalette;
 pub use mouse::MouseDelta;

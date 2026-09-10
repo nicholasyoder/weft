@@ -88,6 +88,7 @@ impl WindowRenderer {
         &mut self,
         world: &hecs::World,
         assets_dir: &std::path::Path,
+        environment: engine_core::EnvironmentSettings,
     ) -> Result<(), RenderError> {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
@@ -111,6 +112,7 @@ impl WindowRenderer {
             self.width,
             self.height,
             assets_dir,
+            environment,
         )?;
         self.ctx.queue().submit(std::iter::once(command_buffer));
         self.ctx.queue().present(surface_texture);

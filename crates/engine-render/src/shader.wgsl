@@ -41,6 +41,11 @@ struct Lights {
     count: u32,
     // Index into `lights` of the shadow caster, or -1 if the scene has none.
     shadow_caster_index: i32,
+    // Hemisphere ambient lighting (see the ambient-lighting ADR). rgb: sky
+    // color for up-facing surfaces. w: overall ambient intensity.
+    ambient_sky: vec4<f32>,
+    // rgb: ground color for down-facing surfaces. w: unused.
+    ambient_ground: vec4<f32>,
 };
 
 @group(2) @binding(0)
@@ -207,7 +212,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 * visibility;
     }
 
-    let ambient = 0.15 * base_color.rgb;
+    // Hemisphere ambient (see the ambient-lighting ADR): blends sky/ground
+    // color by the shading normal's up-component, Fresnel/metallic-weighted
+    // so metals get a base-color-tinted specular ambient response instead
+    // of reading near-black in shadow, and dielectrics get a soft diffuse
+    // bounce. Not prefiltered/roughness-aware IBL — a deliberately scoped
+    // single-color-per-hemisphere approximation (no spare bind group for a
+    // cubemap/prefiltered environment; see tier-2-visual-and-gameplay-realism.md).
+    let ambient_f0 = mix(vec3<f32>(0.04), base_color.rgb, metallic);
+    let n_dot_v_ambient = max(dot(n, v), 1e-4);
+    let ambient_fresnel = fresnel_schlick(n_dot_v_ambient, ambient_f0);
+    let hemi_weight = clamp(dot(n, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5, 0.0, 1.0);
+    let hemi_color =
+        mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, hemi_weight) * lights.ambient_sky.w;
+    let ambient_diffuse =
+        (vec3<f32>(1.0) - ambient_fresnel) * (1.0 - metallic) * base_color.rgb * hemi_color;
+    let ambient_specular = ambient_fresnel * hemi_color;
+    let ambient = ambient_diffuse + ambient_specular;
     let lit = ambient + direct;
     return vec4<f32>(lit, 1.0);
 }
